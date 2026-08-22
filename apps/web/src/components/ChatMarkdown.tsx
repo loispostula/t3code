@@ -2568,6 +2568,9 @@ function useChatMarkdownState({
   );
   const fileLinkChip = useCallback(
     (fileLinkMeta: MarkdownFileLinkMeta, copyMarkdown: string, mediaSource?: string) => {
+      // The integrated browser serves workspace files only, so a path outside the
+      // root (/tmp/...) would open on an asset the server refuses to sign.
+      const previewPath = fileLinkMeta.workspaceRelativePath;
       const mediaPath = mediaSource ?? fileLinkMeta.filePath;
       const canPreviewMedia =
         mediaMimeTypeFromExtension(
@@ -2615,9 +2618,10 @@ function useChatMarkdownState({
           onOpenInBrowser={
             threadRef &&
             canOperatePreview &&
+            previewPath !== null &&
             isPreviewAvailableFor(threadRef.environmentId) &&
-            isBrowserPreviewFile(fileLinkMeta.filePath)
-              ? () => openMarkdownFileInPreview(fileLinkMeta.filePath)
+            isBrowserPreviewFile(previewPath)
+              ? () => openMarkdownFileInPreview(previewPath)
               : undefined
           }
         />
