@@ -14,6 +14,8 @@ interface ImportMetaEnv {
   readonly VITE_RELAY_OTLP_TRACES_DATASET: string;
   readonly VITE_RELAY_OTLP_TRACES_TOKEN: string;
   readonly APP_VERSION: string;
+  /** `owner/repo:branch` of the fork this build came from; empty for upstream builds. */
+  readonly VITE_T3CODE_FORK: string;
 }
 
 interface ImportMeta {

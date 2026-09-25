@@ -199,6 +199,7 @@ import { addBrowserSurface } from "./preview/addBrowserSurface";
 import { closePreviewSession } from "./preview/closePreviewSession";
 import { ThreadPreviewMiniPlayer } from "./preview/ThreadPreviewMiniPlayer";
 import { subscribePreviewAction } from "./preview/previewActionBus";
+import { sendTextToTerminal } from "../terminalInputBus";
 import { getConfiguredPreviewUrls } from "./preview/previewEmptyStateLogic";
 import { makeWorkspaceFileDropHandlers } from "./chat/workspaceFileDrop";
 import {
@@ -4083,6 +4084,78 @@ export default function ChatView(props: ChatViewProps) {
     terminalUiState.terminalIds.length,
     terminalUiState.terminalOpen,
   ]);
+  const sendCodeToTerminal = useCallback(
+    (code: string) => {
+      if (!activeThreadRef || !activeThreadId || !activeProject) return;
+
+      const panelTerminalId =
+        activeRightPanelSurface?.kind === "terminal"
+          ? activeRightPanelSurface.activeTerminalId
+          : null;
+      const existingTerminalId =
+        panelTerminalId ?? (terminalUiState.activeTerminalId || activeKnownTerminalIds[0] || null);
+
+      if (existingTerminalId) {
+        if (panelTerminalId === null) {
+          storeSetActiveTerminal(activeThreadRef, existingTerminalId);
+          setTerminalOpen(true);
+        }
+        sendTextToTerminal({ ...activeThreadRef, terminalId: existingTerminalId }, code);
+        return;
+      }
+
+      const terminalId = nextTerminalId(allocatableActiveTerminalIds);
+      const cwd = gitCwd ?? activeProject.workspaceRoot;
+      setTerminalUiLaunchContext({
+        threadId: activeThreadId,
+        cwd,
+        worktreePath: activeThreadWorktreePath,
+      });
+      storeEnsureTerminal(activeThreadRef, terminalId, { open: true });
+
+      void openTerminal({
+        environmentId: activeThreadRef.environmentId,
+        input: {
+          threadId: activeThreadId,
+          terminalId,
+          cwd,
+          ...(activeThreadWorktreePath != null ? { worktreePath: activeThreadWorktreePath } : {}),
+          env: projectScriptRuntimeEnv({
+            project: { cwd: activeProject.workspaceRoot },
+            worktreePath: activeThreadWorktreePath,
+          }),
+        },
+      }).then((result) => {
+        if (result._tag === "Success") {
+          sendTextToTerminal({ ...activeThreadRef, terminalId }, code);
+          return;
+        }
+        if (!isAtomCommandInterrupted(result)) {
+          const error = squashAtomCommandFailure(result);
+          setThreadError(
+            activeThreadId,
+            error instanceof Error ? error.message : "Failed to open terminal.",
+          );
+        }
+      });
+    },
+    [
+      activeKnownTerminalIds,
+      activeProject,
+      activeRightPanelSurface,
+      activeThreadId,
+      activeThreadRef,
+      activeThreadWorktreePath,
+      allocatableActiveTerminalIds,
+      gitCwd,
+      openTerminal,
+      setTerminalOpen,
+      setThreadError,
+      storeEnsureTerminal,
+      storeSetActiveTerminal,
+      terminalUiState.activeTerminalId,
+    ],
+  );
   const splitTerminal = useCallback(
     (direction: "horizontal" | "vertical" = "horizontal") => {
       if (!activeThreadRef || hasReachedSplitLimit || !activeThreadId || !activeProject) {
@@ -9968,6 +10041,7 @@ export default function ChatView(props: ChatViewProps) {
                   paintOnlyDisplayedTimeline ? noopHeldRevert : onRevertTimelineTurn
                 }
                 isRevertingCheckpoint={!paintOnlyDisplayedTimeline && isRevertingCheckpoint}
+                onSendToTerminal={sendCodeToTerminal}
                 onImageExpand={onExpandTimelineImage}
                 onFileOpen={paintOnlyDisplayedTimeline ? noopHeldAttachment : openFileAttachment}
                 onFileDownload={

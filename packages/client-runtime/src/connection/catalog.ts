@@ -22,6 +22,8 @@ export class BearerConnectionProfile extends Schema.TaggedClass<BearerConnection
     ...ConnectionProfileBase,
     httpBaseUrl: Schema.String,
     wsBaseUrl: Schema.String,
+    /** Tried in order when `httpBaseUrl` is unreachable, e.g. a VPN address behind a LAN one. */
+    fallbackHttpBaseUrls: Schema.optionalKey(Schema.Array(Schema.String)),
   },
 ) {}
 

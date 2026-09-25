@@ -234,6 +234,46 @@ describe("connection onboarding", () => {
     }),
   );
 
+  it.effect("keeps saved fallback URLs unless the update replaces them", () =>
+    Effect.gen(function* () {
+      const environmentId = EnvironmentId.make("environment-paired");
+      const update = (fallbackHttpBaseUrls?: ReadonlyArray<string>) =>
+        prepareBearerConnectionUpdate({
+          input: {
+            environmentId,
+            label: "Gandalf",
+            httpBaseUrl: "http://192.168.1.10:3773",
+            ...(fallbackHttpBaseUrls ? { fallbackHttpBaseUrls } : {}),
+          },
+          entry: Option.some({
+            target: new BearerConnectionTarget({
+              environmentId,
+              label: "Gandalf",
+              connectionId: "bearer:environment-paired",
+            }),
+            profile: Option.some(
+              new BearerConnectionProfile({
+                connectionId: "bearer:environment-paired",
+                environmentId,
+                label: "Gandalf",
+                httpBaseUrl: "http://192.168.1.10:3773/",
+                wsBaseUrl: "ws://192.168.1.10:3773/",
+                fallbackHttpBaseUrls: ["http://10.8.0.1:3773/"],
+              }),
+            ),
+            enabled: true,
+          }),
+          credential: Option.some(new BearerConnectionCredential({ token: "bearer-token" })),
+        });
+
+      expect((yield* update()).profile.fallbackHttpBaseUrls).toEqual(["http://10.8.0.1:3773/"]);
+      expect((yield* update(["http://10.8.0.2:3773"])).profile.fallbackHttpBaseUrls).toEqual([
+        "http://10.8.0.2:3773/",
+      ]);
+      expect((yield* update([])).profile).not.toHaveProperty("fallbackHttpBaseUrls");
+    }),
+  );
+
   it.effect("prepares an SSH registration from the provisioned platform environment", () =>
     Effect.gen(function* () {
       const target = {

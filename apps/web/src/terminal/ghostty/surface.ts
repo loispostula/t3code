@@ -925,6 +925,14 @@ export class GhosttyTerminalSurface {
     this.input.focus({ preventScroll: true });
   }
 
+  /** Inserts text using the terminal's current bracketed-paste mode. */
+  pasteText(text: string): void {
+    this.pasteShortcutToken += 1;
+    if (this.disposed || text.length === 0) return;
+    const encoded = this.core.encodePaste(text);
+    if (encoded.length > 0) this.options.onData(encoded);
+  }
+
   /**
    * Pastes clipboard text read by the host (context menu) with the same
    * bracketed-paste encoding as a native paste event. The read joins the same
@@ -941,10 +949,7 @@ export class GhosttyTerminalSurface {
     if (this.disposed || this.pasteShortcutToken !== token || !isCurrent()) return;
     // As in every paste path, delivering bumps the token so a clipboard read
     // still in flight cannot land after this text reaches the shell.
-    this.pasteShortcutToken += 1;
-    if (text.length === 0) return;
-    const encoded = this.core.encodePaste(text);
-    if (encoded.length > 0) this.options.onData(encoded);
+    this.pasteText(text);
   }
 
   /**

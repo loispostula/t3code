@@ -108,6 +108,15 @@ tailscale serve --https=443 off
 If that port is already in use, choose another with
 `--tailscale-serve-port`. See `t3 pair --help` for other pairing options.
 
+### More than one address
+
+A server you reach at different addresses depending on where you are, such as a
+LAN IP at home and a VPN IP away, can keep all of them. In **Settings →
+Connections**, open the saved environment's menu and choose **Edit URLs**. Enter
+one URL per line, preferred first. Each connection uses the first URL that
+answers. An address that does not answer within a few seconds is skipped. A
+rejected credential is not retried on the next address.
+
 ### Hosted web app
 
 [app.t3.codes](https://app.t3.codes) needs an HTTPS endpoint. It connects directly

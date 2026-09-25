@@ -103,6 +103,13 @@ the text is an unedited recalled prompt, with the caret on the first visual line
 the last visual line for `ArrowDown`, counting wrapped lines. Editing a recalled prompt turns it
 into a normal draft.
 
+## Send a shell snippet to the terminal
+
+On web and desktop, shell code blocks include **Send to terminal** beside **Copy code**. The action
+pastes the snippet into the active terminal without pressing Enter. If the selected right-panel tab
+is a terminal, T3 Code uses it; otherwise it opens and focuses the active terminal drawer, creating
+a terminal when the thread does not have one yet.
+
 ## Edit an earlier prompt
 
 On web and desktop, choose **Edit from here** beneath a sent message to rewind

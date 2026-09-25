@@ -148,6 +148,7 @@ import { authEnvironment } from "~/state/auth";
 import { environmentCatalog } from "~/connection/catalog";
 import {
   connectPairing as connectPairingAtom,
+  updateBearerConnection as updateBearerConnectionAtom,
   connectSshEnvironment as connectSshEnvironmentAtom,
 } from "~/connection/onboarding";
 import { useEnvironmentQuery } from "~/state/query";
@@ -1480,6 +1481,13 @@ function SavedBackendListRow({
   onRemove,
 }: SavedBackendListRowProps) {
   const environmentId = environment.environmentId;
+  const [editingUrls, setEditingUrls] = useState(false);
+  const bearerProfile = Option.getOrNull(environment.entry.profile);
+  const editableProfile =
+    bearerProfile?._tag === "BearerConnectionProfile" &&
+    !isDesktopLocalConnectionTarget(environment.entry.target)
+      ? bearerProfile
+      : null;
   const unsupported = environment.connection.phase === "unsupported";
   const enabled = environment.entry.enabled && !unsupported;
   const isConnected = environment.connection.phase === "connected";
@@ -1635,6 +1643,9 @@ function SavedBackendListRow({
             environmentId={environmentId}
             serverConfig={environment.serverConfig}
           />
+          {editableProfile ? (
+            <MenuItem onClick={() => setEditingUrls(true)}>Edit URLs…</MenuItem>
+          ) : null}
           {errorTraceId ? (
             <MenuItem onClick={() => copyTraceId(errorTraceId)}>Copy trace ID</MenuItem>
           ) : null}
@@ -1644,7 +1655,90 @@ function SavedBackendListRow({
           </MenuItem>
         </MenuPopup>
       </Menu>
+      {editableProfile && editingUrls ? (
+        <EditBackendUrlsDialog
+          environmentId={environmentId}
+          label={environment.label}
+          urls={[editableProfile.httpBaseUrl, ...(editableProfile.fallbackHttpBaseUrls ?? [])]}
+          onClose={() => setEditingUrls(false)}
+        />
+      ) : null}
     </EnvironmentRow>
+  );
+}
+
+function EditBackendUrlsDialog({
+  environmentId,
+  label,
+  urls,
+  onClose,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly label: string;
+  readonly urls: ReadonlyArray<string>;
+  readonly onClose: () => void;
+}) {
+  const updateBearerConnection = useAtomCommand(updateBearerConnectionAtom, {
+    reportFailure: false,
+  });
+  const [draft, setDraft] = useState(() => urls.join("\n"));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [httpBaseUrl, ...fallbackHttpBaseUrls] = draft
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line !== "");
+
+  const save = async () => {
+    if (httpBaseUrl === undefined) return;
+    setSaving(true);
+    setError(null);
+    const result = await updateBearerConnection({
+      environmentId,
+      label,
+      httpBaseUrl,
+      fallbackHttpBaseUrls,
+    });
+    setSaving(false);
+    if (result._tag === "Success") {
+      onClose();
+    } else if (!isAtomCommandInterrupted(result)) {
+      const failure = squashAtomCommandFailure(result);
+      setError(failure instanceof Error ? failure.message : "Failed to save URLs.");
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogPopup className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Edit {label} URLs</DialogTitle>
+          <DialogDescription>
+            One URL per line. Each connection tries them from the top and uses the first that
+            answers, e.g. a LAN address first and a VPN address after it.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogPanel>
+          <Textarea
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            placeholder={"http://192.168.1.10:3773\nhttp://10.8.0.1:3773"}
+            rows={4}
+            disabled={saving}
+            autoFocus
+          />
+          {error ? <p className="mt-2 text-xs text-destructive">{error}</p> : null}
+        </DialogPanel>
+        <DialogFooter variant="bare">
+          <Button variant="outline" disabled={saving} onClick={onClose}>
+            Cancel
+          </Button>
+          <Button disabled={saving || httpBaseUrl === undefined} onClick={() => void save()}>
+            {saving ? "Saving…" : "Save"}
+          </Button>
+        </DialogFooter>
+      </DialogPopup>
+    </Dialog>
   );
 }
 
