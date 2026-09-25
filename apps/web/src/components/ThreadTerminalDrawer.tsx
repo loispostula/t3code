@@ -95,6 +95,7 @@ import {
   resolveTerminalFontSizePreference,
   TYPOGRAPHY_ADVANCED_STORAGE_KEY,
 } from "../appearanceFonts";
+import { registerTerminalInputReceiver } from "../terminalInputBus";
 
 const MIN_DRAWER_HEIGHT = 180;
 const MAX_DRAWER_HEIGHT_RATIO = 0.75;
@@ -575,6 +576,13 @@ export function TerminalViewport({
       setupTerminal = terminal;
       terminalRef.current = terminal;
       terminal.input.readOnly = !hasTerminalWriteAccess();
+      setupCleanups.push(
+        registerTerminalInputReceiver({ environmentId, threadId, terminalId }, (text) => {
+          if (!hasTerminalWriteAccess()) return;
+          terminal.pasteText(text);
+          terminal.focus();
+        }),
+      );
       // Client settings hydrate asynchronously; a font preference that landed
       // while the surface was loading found terminalRef null, so its setFont
       // was dropped. Re-apply whatever is current once the terminal exists.

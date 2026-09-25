@@ -83,6 +83,8 @@ vi.mock("~/lib/openPullRequestLink", () => ({
 import ChatMarkdown, {
   canUseMarkdownFileShellActions,
   hasMarkdownFilePrimaryAction,
+  isTerminalCodeLanguage,
+  prepareCodeForTerminal,
   shouldUseMarkdownFileBrowserPrimaryAction,
 } from "./ChatMarkdown";
 
@@ -541,6 +543,23 @@ describe("ChatMarkdown streaming", () => {
       await act(async () => renderer?.unmount());
       vi.unstubAllGlobals();
     }
+  });
+});
+
+describe("terminal code block actions", () => {
+  it.each(["bash", "sh", "shell", "zsh", "fish", "terminal", "console", "pwsh", "cmd"])(
+    "recognizes %s as terminal input",
+    (language) => {
+      expect(isTerminalCodeLanguage(language)).toBe(true);
+    },
+  );
+
+  it("does not offer terminal actions for source code", () => {
+    expect(isTerminalCodeLanguage("typescript")).toBe(false);
+  });
+
+  it("removes the markdown fence newline without removing script content", () => {
+    expect(prepareCodeForTerminal("echo one\necho two\n")).toBe("echo one\necho two");
   });
 });
 

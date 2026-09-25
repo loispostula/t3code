@@ -33,6 +33,8 @@ export class BearerConnectionProfile extends Schema.TaggedClass<BearerConnection
      * Connect credential instead of a stored bearer token.
      */
     authorization: Schema.optionalKey(Schema.Literal("t3-connect")),
+    /** Tried in order when `httpBaseUrl` is unreachable, e.g. a VPN address behind a LAN one. */
+    fallbackHttpBaseUrls: Schema.optionalKey(Schema.Array(Schema.String)),
   },
 ) {}
 

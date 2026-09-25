@@ -40,6 +40,7 @@ import {
   PlayIcon,
   PresentationIcon,
   SparklesIcon,
+  TerminalIcon,
   TriangleAlertIcon,
   WorkflowIcon,
   WrapTextIcon,
@@ -230,6 +231,8 @@ interface ChatMarkdownProps {
   /** Append a prompt that invokes a newly created artifact-template skill. */
   onUseArtifactTemplate?: ((template: CodexArtifactTemplate) => void) | undefined;
   onRunShellCommand?: ((command: string) => void) | undefined;
+  /** Paste shell code into the thread's active terminal without submitting it. */
+  onSendToTerminal?: ((code: string) => void) | undefined;
   /** Directory that anchors relative links and images; defaults to `cwd`. Set
       to the file's own directory when rendering a markdown file. */
   imageBaseDir?: string | undefined;
@@ -444,6 +447,31 @@ function extractFenceLanguage(className: string | undefined): string {
   const raw = match?.[1] ?? "text";
   // Shiki doesn't bundle a gitignore grammar; ini is a close match (#685)
   return raw === "gitignore" ? "ini" : raw;
+}
+
+const TERMINAL_CODE_LANGUAGES = new Set([
+  "bash",
+  "bat",
+  "batch",
+  "cmd",
+  "console",
+  "fish",
+  "powershell",
+  "pwsh",
+  "sh",
+  "shell",
+  "shell-session",
+  "shellscript",
+  "terminal",
+  "zsh",
+]);
+
+export function isTerminalCodeLanguage(language: string): boolean {
+  return TERMINAL_CODE_LANGUAGES.has(language.toLowerCase());
+}
+
+export function prepareCodeForTerminal(code: string): string {
+  return code.replace(/\r?\n$/, "");
 }
 
 const FENCE_TITLE_ATTR_REGEX = /(?:^|\s)(?:title|file(?:name)?)=(?:"([^"]+)"|'([^']+)'|(\S+))/i;
@@ -849,6 +877,7 @@ function MarkdownCodeBlock({
   leadingActions,
   canWrap = true,
   diagram = false,
+  onSendToTerminal,
   children,
 }: {
   code: string;
@@ -861,6 +890,7 @@ function MarkdownCodeBlock({
   canWrap?: boolean;
   /** Renders content instead of code, with actions below it like tables. */
   diagram?: boolean;
+  onSendToTerminal?: ((code: string) => void) | undefined;
   children: ReactNode;
 }) {
   const [copied, setCopied] = useState(false);
@@ -995,6 +1025,24 @@ function MarkdownCodeBlock({
                 <PlayIcon className="size-3" />
               </TooltipTrigger>
               <TooltipPopup side="top">Run in terminal</TooltipPopup>
+            </Tooltip>
+          ) : null}
+          {onSendToTerminal && isTerminalCodeLanguage(language) ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    type="button"
+                    variant="ghost-muted"
+                    size="icon-xs"
+                    onClick={() => onSendToTerminal(prepareCodeForTerminal(code))}
+                    aria-label="Send to terminal"
+                  />
+                }
+              >
+                <TerminalIcon className="size-3" />
+              </TooltipTrigger>
+              <TooltipPopup side="top">Send to terminal</TooltipPopup>
             </Tooltip>
           ) : null}
           {copyButton}
@@ -2239,6 +2287,7 @@ function useChatMarkdownState({
   skills = EMPTY_MARKDOWN_SKILLS,
   onUseArtifactTemplate,
   onRunShellCommand,
+  onSendToTerminal,
   imageBaseDir,
   onImageExpand,
   renderContextReference,
@@ -2660,6 +2709,7 @@ function useChatMarkdownState({
       isStreaming,
       linkTargetPreference,
       markdownFileLinkMetaByHref,
+      onSendToTerminal,
       onTaskListChange,
       onUseArtifactTemplate,
       onRunShellCommand,
@@ -2693,6 +2743,7 @@ function useChatMarkdownState({
       isStreaming,
       linkTargetPreference,
       markdownFileLinkMetaByHref,
+      onSendToTerminal,
       onTaskListChange,
       onUseArtifactTemplate,
       onRunShellCommand,
@@ -3256,9 +3307,15 @@ const CHAT_MARKDOWN_COMPONENTS = {
     return <MarkdownDetails open={detailsOpen}>{children}</MarkdownDetails>;
   },
   pre: function MarkdownPre({ node, children, ...props }) {
-    const { resolvedTheme, diffThemeName, expandMedia, isStreaming, onRunShellCommand, text } = use(
-      ChatMarkdownRendererContext,
-    );
+    const {
+      resolvedTheme,
+      diffThemeName,
+      expandMedia,
+      isStreaming,
+      onRunShellCommand,
+      onSendToTerminal,
+      text,
+    } = use(ChatMarkdownRendererContext);
     const codeBlock = extractCodeBlock(children);
     if (!codeBlock) {
       return <pre {...props}>{children}</pre>;
@@ -3314,6 +3371,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
             : undefined
         }
         isStreaming={isStreaming}
+        onSendToTerminal={onSendToTerminal}
       >
         {highlightedCode}
       </MarkdownCodeBlock>

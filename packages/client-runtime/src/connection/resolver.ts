@@ -38,7 +38,11 @@ import type {
   RelayConnectionTarget,
   SshConnectionTarget,
 } from "./model.ts";
-import { ConnectionBlockedError, type ConnectionAttemptError } from "./model.ts";
+import {
+  ConnectionBlockedError,
+  ConnectionTransientError,
+  type ConnectionAttemptError,
+} from "./model.ts";
 import * as ConnectionProfileStore from "./profileStore.ts";
 import {
   appendOrchestrationProtocol,
@@ -46,6 +50,7 @@ import {
 } from "./compatibility.ts";
 import { credentialConnectionId } from "./routes.ts";
 import { fetchRemoteEnvironmentDescriptor } from "../environment/descriptor.ts";
+import { deriveWsBaseUrl } from "../environment/endpoint.ts";
 
 export class ConnectionResolver extends Context.Service<
   ConnectionResolver,
@@ -70,6 +75,18 @@ export class ConnectionResolver extends Context.Service<
 const isBearerProfile = Schema.is(BearerConnectionProfile);
 const isSshProfile = Schema.is(SshConnectionProfile);
 const isBearerCredential = Schema.is(BearerConnectionCredential);
+
+// A reachable LAN endpoint answers in milliseconds; a black-holed one would
+// otherwise hold the whole attempt for the descriptor's 10s request timeout.
+const FALLBACK_CANDIDATE_TIMEOUT_MS = 3_000;
+
+/** Credential and permission failures are the same on every endpoint, so they stop the walk. */
+function canTryNextEndpoint(error: ConnectionAttemptError): boolean {
+  return !(
+    error._tag === "ConnectionBlockedError" &&
+    (error.reason === "authentication" || error.reason === "permission")
+  );
+}
 
 function primarySocketUrl(
   target: PrimaryConnectionTarget,
@@ -159,13 +176,41 @@ const makeBearerBroker = Effect.fn("clientRuntime.connection.broker.makeBearer")
     if (!isBearerCredential(credential)) {
       return yield* credentialMissingError(target.connectionId);
     }
-    const authorized = yield* remote.authorizeBearer({
-      expectedEnvironmentId: target.environmentId,
-      httpBaseUrl: profile.httpBaseUrl,
-      wsBaseUrl: profile.wsBaseUrl,
-      bearerToken: credential.token,
-      connectionMethod: "direct",
+    const endpoints = [
+      { httpBaseUrl: profile.httpBaseUrl, wsBaseUrl: profile.wsBaseUrl },
+      ...(profile.fallbackHttpBaseUrls ?? []).map((httpBaseUrl) => ({
+        httpBaseUrl,
+        wsBaseUrl: deriveWsBaseUrl(httpBaseUrl),
+      })),
+    ];
+    const attempts = endpoints.map((endpoint, index) => {
+      const attempt = remote.authorizeBearer({
+        expectedEnvironmentId: target.environmentId,
+        ...endpoint,
+        bearerToken: credential.token,
+        connectionMethod: "direct",
+      });
+      return index === endpoints.length - 1
+        ? attempt
+        : attempt.pipe(
+            Effect.timeoutOrElse({
+              duration: FALLBACK_CANDIDATE_TIMEOUT_MS,
+              orElse: () =>
+                Effect.fail(
+                  new ConnectionTransientError({
+                    reason: "timeout",
+                    detail: `${endpoint.httpBaseUrl} did not answer.`,
+                  }),
+                ),
+            }),
+          );
     });
+    const authorized = yield* attempts
+      .slice(1)
+      .reduce(
+        (previous, next) => previous.pipe(Effect.catchIf(canTryNextEndpoint, () => next)),
+        attempts[0]!,
+      );
     return {
       environmentId: authorized.environmentId,
       label: authorized.label,
