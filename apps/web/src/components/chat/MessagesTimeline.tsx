@@ -281,6 +281,7 @@ interface TimelineRowSharedState {
   onRevertToTurnCount: (targetTurnCount: number, messageId: MessageId) => void;
   onUseArtifactTemplate: (template: CodexArtifactTemplate) => void;
   onRunShellCommand: ((command: string) => void) | undefined;
+  onSendToTerminal?: ((code: string) => void) | undefined;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   onFileOpen: (attachment: ChatFileAttachment) => void;
   onFileDownload: (attachment: ChatFileAttachment) => void;
@@ -430,6 +431,7 @@ interface MessagesTimelineProps {
   onRevertToTurnCount: (targetTurnCount: number, messageId: MessageId) => void;
   onUseArtifactTemplate?: (template: CodexArtifactTemplate) => void;
   onRunShellCommand?: (command: string) => void;
+  onSendToTerminal?: (code: string) => void;
   isRevertingCheckpoint: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   onFileOpen?: (attachment: ChatFileAttachment) => void;
@@ -500,6 +502,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   onRevertToTurnCount,
   onUseArtifactTemplate = NOOP_USE_ARTIFACT_TEMPLATE,
   onRunShellCommand,
+  onSendToTerminal,
   isRevertingCheckpoint,
   onImageExpand,
   onFileOpen = NOOP_OPEN_ATTACHMENT,
@@ -1155,6 +1158,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onRevertToTurnCount,
       onUseArtifactTemplate,
       onRunShellCommand,
+      onSendToTerminal,
       onImageExpand,
       onFileOpen,
       onFileDownload,
@@ -1191,6 +1195,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onRevertToTurnCount,
       onUseArtifactTemplate,
       onRunShellCommand,
+      onSendToTerminal,
       onImageExpand,
       onFileOpen,
       onFileDownload,
@@ -2403,6 +2408,7 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
             headingLevelOffset={MESSAGE_HEADING_LEVEL}
             onUseArtifactTemplate={ctx.onUseArtifactTemplate}
             onRunShellCommand={ctx.onRunShellCommand}
+            onSendToTerminal={ctx.onSendToTerminal}
             onImageExpand={ctx.onImageExpand}
           />
         </AssistantCitationSource>
@@ -4017,6 +4023,7 @@ const UserMessageBody = memo(function UserMessageBody(props: {
       cwd={props.markdownCwd}
       threadRef={ctx.threadRef ?? undefined}
       skills={props.skills}
+      onSendToTerminal={ctx.onSendToTerminal}
       className="text-message-foreground"
       lineBreaks
       parseRawHtml={false}
@@ -4055,6 +4062,7 @@ function UserMessageReviewCommentCard({ comment }: { comment: ReviewCommentConte
           cwd={ctx.markdownCwd}
           threadRef={ctx.threadRef ?? undefined}
           skills={ctx.skills}
+          onSendToTerminal={ctx.onSendToTerminal}
           className="text-message-foreground"
         />
       )}

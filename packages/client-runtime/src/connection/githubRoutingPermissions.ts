@@ -34,7 +34,7 @@ export function gitHubRoutingConnectionKey(entry: ConnectionCatalogEntry): strin
     target._tag === "PrimaryConnectionTarget"
       ? [target.httpBaseUrl, target.wsBaseUrl]
       : profile?._tag === "BearerConnectionProfile"
-        ? [profile.httpBaseUrl, profile.wsBaseUrl]
+        ? [profile.httpBaseUrl, profile.wsBaseUrl, ...(profile.fallbackHttpBaseUrls ?? [])]
         : null;
   if (baseUrls === null) return null;
   try {
@@ -42,6 +42,7 @@ export function gitHubRoutingConnectionKey(entry: ConnectionCatalogEntry): strin
     if (
       !["http:", "https:"].includes(urls[0]!.protocol) ||
       !["ws:", "wss:"].includes(urls[1]!.protocol) ||
+      urls.slice(2).some((url) => !["http:", "https:"].includes(url.protocol)) ||
       urls.some((url) => url.username || url.password)
     )
       return null;
