@@ -205,12 +205,27 @@ const makeBearerBroker = Effect.fn("clientRuntime.connection.broker.makeBearer")
             }),
           );
     });
-    const authorized = yield* attempts
-      .slice(1)
-      .reduce(
-        (previous, next) => previous.pipe(Effect.catchIf(canTryNextEndpoint, () => next)),
-        attempts[0]!,
-      );
+    const authorized = yield* attempts.slice(1).reduce(
+      (previous, next) =>
+        previous.pipe(
+          Effect.catchIf(canTryNextEndpoint, (skipped) =>
+            // Keep every endpoint's failure: the row shows the primary URL, so reporting only
+            // the last fallback's error reads as if the primary had failed for that reason.
+            next.pipe(
+              Effect.mapError((error) =>
+                error._tag === "ConnectionTransientError"
+                  ? new ConnectionTransientError({
+                      reason: error.reason,
+                      detail: `${skipped.detail}\n${error.detail}`,
+                      ...(error.traceId === undefined ? {} : { traceId: error.traceId }),
+                    })
+                  : error,
+              ),
+            ),
+          ),
+        ),
+      attempts[0]!,
+    );
     return {
       environmentId: authorized.environmentId,
       label: authorized.label,

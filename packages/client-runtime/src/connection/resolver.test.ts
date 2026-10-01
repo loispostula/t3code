@@ -384,6 +384,30 @@ describe("ConnectionResolver", () => {
       }),
     );
 
+    it.effect("reports every endpoint's failure when none answers", () =>
+      Effect.gen(function* () {
+        const brokerLayer = yield* makeDependencies({
+          credentials: [["saved-1", new BearerConnectionCredential({ token: "secret-bearer" })]],
+          authorizeBearer: (input) =>
+            Effect.fail(
+              new ConnectionTransientError({
+                reason: "network",
+                detail: `${input.httpBaseUrl} refused`,
+              }),
+            ),
+        });
+        const broker = yield* ConnectionResolver.ConnectionResolver.pipe(
+          Effect.provide(brokerLayer),
+        );
+        const result = yield* Effect.result(
+          broker.prepare(catalogEntry(target, Option.some(profile))),
+        );
+        expect(Result.isFailure(result) && result.failure.detail).toBe(
+          `${LAN_URL} refused\n${VPN_URL} refused`,
+        );
+      }),
+    );
+
     it.effect("does not fall back when the credential is rejected", () =>
       Effect.gen(function* () {
         const rejected = new ConnectionBlockedError({ reason: "authentication", detail: "denied" });
