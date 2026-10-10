@@ -1,12 +1,12 @@
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/process";
 import * as FileSystem from "effect/FileSystem";
 
 import * as ForgejoCli from "./ForgejoCli.ts";
 import * as ForgejoSourceControlProvider from "./ForgejoSourceControlProvider.ts";
-import * as VcsProcess from "../vcs/VcsProcess.ts";
+import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 
 const output = (stdout: string) => ({
   exitCode: ChildProcessSpawner.ExitCode(0),
@@ -39,7 +39,7 @@ function makeProvider(cli: Partial<ForgejoCli.ForgejoCli["Service"]>) {
             }),
           ...cli,
         }),
-        Layer.mock(VcsProcess.VcsProcess)({}),
+        TestSourceControlHost.layer({}),
         FileSystem.layerNoop({}),
       ),
     ),
