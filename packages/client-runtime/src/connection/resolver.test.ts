@@ -8,12 +8,14 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Result from "effect/Result";
 
 import * as ConnectionResolver from "./resolver.ts";
 import * as ClientCapabilities from "../platform/capabilities.ts";
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import {
   BearerConnectionCredential,
+  BearerConnectionProfile,
   type ConnectionCatalogEntry,
   SshConnectionProfile,
   type ConnectionCredential,
@@ -21,7 +23,10 @@ import {
 } from "./catalog.ts";
 import * as ConnectionCredentialStore from "./credentialStore.ts";
 import {
+  BearerConnectionTarget,
+  ConnectionBlockedError,
   ConnectionTransientError,
+  type ConnectionAttemptError,
   PrimaryConnectionTarget,
   SshConnectionTarget,
   type ConnectionTarget,
@@ -347,4 +352,90 @@ describe("ConnectionResolver", () => {
         expect(yield* permissions.get(entry)).toBe(scenario === "changed" ? "off" : "read-write");
       }),
   );
+
+  describe("bearer fallback endpoints", () => {
+    const LAN_URL = "http://192.168.1.10:3773";
+    const VPN_URL = "http://10.8.0.1:3773";
+    const target = new BearerConnectionTarget({
+      environmentId: ENVIRONMENT_ID,
+      label: "Saved",
+      connectionId: "saved-1",
+    });
+    const profile = new BearerConnectionProfile({
+      connectionId: "saved-1",
+      environmentId: ENVIRONMENT_ID,
+      label: "Saved",
+      httpBaseUrl: LAN_URL,
+      wsBaseUrl: "ws://192.168.1.10:3773",
+      fallbackHttpBaseUrls: [VPN_URL],
+    });
+    const prepareWith = Effect.fn(function* (failLan: ConnectionAttemptError) {
+      const tried = yield* Ref.make<ReadonlyArray<string>>([]);
+      const brokerLayer = yield* makeDependencies({
+        credentials: [["saved-1", new BearerConnectionCredential({ token: "secret-bearer" })]],
+        authorizeBearer: (input) =>
+          Ref.update(tried, (values) => [...values, input.wsBaseUrl]).pipe(
+            Effect.andThen(
+              input.httpBaseUrl === LAN_URL
+                ? Effect.fail(failLan)
+                : Effect.succeed({
+                    environmentId: input.expectedEnvironmentId,
+                    label: "Saved",
+                    httpBaseUrl: input.httpBaseUrl,
+                    socketUrl: `${input.wsBaseUrl}/ws`,
+                    httpAuthorization: { _tag: "Bearer" as const, token: input.bearerToken },
+                  }),
+            ),
+          ),
+      });
+      const broker = yield* ConnectionResolver.ConnectionResolver.pipe(Effect.provide(brokerLayer));
+      const result = yield* Effect.result(
+        broker.prepare(catalogEntry(target, Option.some(profile))),
+      );
+      return { result, tried: yield* Ref.get(tried) };
+    });
+
+    it.effect("falls back to the next endpoint when the first is unreachable", () =>
+      Effect.gen(function* () {
+        const { result, tried } = yield* prepareWith(
+          new ConnectionTransientError({ reason: "network", detail: "unreachable" }),
+        );
+        expect(tried).toEqual(["ws://192.168.1.10:3773", "ws://10.8.0.1:3773/"]);
+        expect(Result.isSuccess(result) && result.success.httpBaseUrl).toBe(VPN_URL);
+      }),
+    );
+
+    it.effect("reports every endpoint's failure when none answers", () =>
+      Effect.gen(function* () {
+        const brokerLayer = yield* makeDependencies({
+          credentials: [["saved-1", new BearerConnectionCredential({ token: "secret-bearer" })]],
+          authorizeBearer: (input) =>
+            Effect.fail(
+              new ConnectionTransientError({
+                reason: "network",
+                detail: `${input.httpBaseUrl} refused`,
+              }),
+            ),
+        });
+        const broker = yield* ConnectionResolver.ConnectionResolver.pipe(
+          Effect.provide(brokerLayer),
+        );
+        const result = yield* Effect.result(
+          broker.prepare(catalogEntry(target, Option.some(profile))),
+        );
+        expect(Result.isFailure(result) && result.failure.detail).toBe(
+          `${LAN_URL} refused\n${VPN_URL} refused`,
+        );
+      }),
+    );
+
+    it.effect("does not fall back when the credential is rejected", () =>
+      Effect.gen(function* () {
+        const rejected = new ConnectionBlockedError({ reason: "authentication", detail: "denied" });
+        const { result, tried } = yield* prepareWith(rejected);
+        expect(tried).toEqual(["ws://192.168.1.10:3773"]);
+        expect(Result.isFailure(result) && result.failure).toBe(rejected);
+      }),
+    );
+  });
 });

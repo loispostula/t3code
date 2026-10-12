@@ -22,6 +22,10 @@ import {
   environmentMcpUrl,
 } from "@t3tools/client-runtime/connection";
 import * as Option from "effect/Option";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { cn } from "../../lib/utils";
@@ -38,6 +42,16 @@ import { usePreparedConnection } from "~/state/session";
 import { EnvironmentRow, environmentTransportLabel } from "./EnvironmentRow";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
 import { Switch } from "../ui/switch";
+import {
+  Dialog,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogPanel,
+  DialogPopup,
+  DialogTitle,
+} from "../ui/dialog";
+import { Textarea } from "../ui/textarea";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { Button, InlineButton } from "../ui/button";
@@ -55,6 +69,8 @@ import { useManagedTunnelUsage } from "~/cloud/managedRelayState";
 import { useT3ConnectAccountPage } from "../clerk/T3ConnectAccountPages";
 import { TunnelLimitAlert, TunnelUsageMeter } from "../cloud/TunnelUsage";
 import { environmentCatalog } from "~/connection/catalog";
+import { isDesktopLocalConnectionTarget } from "~/connection/desktopLocal";
+import { updateBearerConnection as updateBearerConnectionAtom } from "~/connection/onboarding";
 import { readEnvironmentScope } from "~/state/session";
 import { type EnvironmentPresentation, useRelayEnvironmentDiscovery } from "~/state/environments";
 import { APP_VERSION } from "~/branding";
@@ -119,6 +135,13 @@ export function SavedBackendListRow({
   const [permissionsOpen, setPermissionsOpen] = useState(false);
   const [diagnosisOpen, setDiagnosisOpen] = useState(false);
   const environmentId = environment.environmentId;
+  const [editingUrls, setEditingUrls] = useState(false);
+  const bearerProfile = Option.getOrNull(environment.entry.profile);
+  const editableProfile =
+    bearerProfile?._tag === "BearerConnectionProfile" &&
+    !isDesktopLocalConnectionTarget(environment.entry.target)
+      ? bearerProfile
+      : null;
   const unsupported = environment.connection.phase === "unsupported";
   const blocked = unsupported && !hasSavedBearerRoute(environment.entry);
   const enabled = environment.entry.enabled && !unsupported;
@@ -421,6 +444,9 @@ export function SavedBackendListRow({
           {mcpUrl ? (
             <MenuItem onClick={() => copyMcpUrl(mcpUrl, { url: mcpUrl })}>Copy MCP URL</MenuItem>
           ) : null}
+          {editableProfile ? (
+            <MenuItem onClick={() => setEditingUrls(true)}>Edit URLs…</MenuItem>
+          ) : null}
           {errorTraceId ? (
             <MenuItem onClick={() => copyTraceId(errorTraceId)}>Copy trace ID</MenuItem>
           ) : null}
@@ -430,7 +456,90 @@ export function SavedBackendListRow({
           </MenuItem>
         </MenuPopup>
       </Menu>
+      {editableProfile && editingUrls ? (
+        <EditBackendUrlsDialog
+          environmentId={environmentId}
+          label={environment.label}
+          urls={[editableProfile.httpBaseUrl, ...(editableProfile.fallbackHttpBaseUrls ?? [])]}
+          onClose={() => setEditingUrls(false)}
+        />
+      ) : null}
     </EnvironmentRow>
+  );
+}
+
+function EditBackendUrlsDialog({
+  environmentId,
+  label,
+  urls,
+  onClose,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly label: string;
+  readonly urls: ReadonlyArray<string>;
+  readonly onClose: () => void;
+}) {
+  const updateBearerConnection = useAtomCommand(updateBearerConnectionAtom, {
+    reportFailure: false,
+  });
+  const [draft, setDraft] = useState(() => urls.join("\n"));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [httpBaseUrl, ...fallbackHttpBaseUrls] = draft
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line !== "");
+
+  const save = async () => {
+    if (httpBaseUrl === undefined) return;
+    setSaving(true);
+    setError(null);
+    const result = await updateBearerConnection({
+      environmentId,
+      label,
+      httpBaseUrl,
+      fallbackHttpBaseUrls,
+    });
+    setSaving(false);
+    if (result._tag === "Success") {
+      onClose();
+    } else if (!isAtomCommandInterrupted(result)) {
+      const failure = squashAtomCommandFailure(result);
+      setError(failure instanceof Error ? failure.message : "Failed to save URLs.");
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogPopup className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Edit {label} URLs</DialogTitle>
+          <DialogDescription>
+            One URL per line. Each connection tries them from the top and uses the first that
+            answers, e.g. a LAN address first and a VPN address after it.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogPanel>
+          <Textarea
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            placeholder={"http://192.168.1.10:3773\nhttp://10.8.0.1:3773"}
+            rows={4}
+            disabled={saving}
+            autoFocus
+          />
+          {error ? <p className="mt-2 text-xs text-destructive">{error}</p> : null}
+        </DialogPanel>
+        <DialogFooter variant="bare">
+          <Button variant="outline" disabled={saving} onClick={onClose}>
+            Cancel
+          </Button>
+          <Button disabled={saving || httpBaseUrl === undefined} onClick={() => void save()}>
+            {saving ? "Saving…" : "Save"}
+          </Button>
+        </DialogFooter>
+      </DialogPopup>
+    </Dialog>
   );
 }
 
