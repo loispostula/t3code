@@ -63,6 +63,8 @@ export interface BearerConnectionUpdateInput {
   readonly environmentId: EnvironmentId;
   readonly label: string;
   readonly httpBaseUrl: string;
+  /** Omitted keeps the saved fallbacks; an empty list clears them. */
+  readonly fallbackHttpBaseUrls?: ReadonlyArray<string>;
 }
 
 export class ConnectionOnboarding extends Context.Service<
@@ -277,16 +279,22 @@ export const prepareBearerConnectionUpdate = Effect.fn(
       ...translatableDetail(msg("Environment label cannot be empty.")),
     });
   }
-  const httpBaseUrl = yield* Effect.try({
-    try: () => normalizeHttpBaseUrl(options.input.httpBaseUrl),
-    catch: (cause) =>
-      new ConnectionBlockedError({
-        reason: "configuration",
-        ...(cause instanceof Error
-          ? detailFromError(cause)
-          : translatableDetail(msg("The environment URL is invalid."))),
-      }),
-  });
+  const normalizeUrl = (rawValue: string) =>
+    Effect.try({
+      try: () => normalizeHttpBaseUrl(rawValue),
+      catch: (cause) =>
+        new ConnectionBlockedError({
+          reason: "configuration",
+          ...(cause instanceof Error
+            ? detailFromError(cause)
+            : translatableDetail(msg("The environment URL is invalid."))),
+        }),
+    });
+  const httpBaseUrl = yield* normalizeUrl(options.input.httpBaseUrl);
+  const fallbackHttpBaseUrls = yield* Effect.forEach(
+    options.input.fallbackHttpBaseUrls ?? entry.profile.value.fallbackHttpBaseUrls ?? [],
+    normalizeUrl,
+  );
   const connectionId = entry.target.connectionId;
   return new BearerConnectionRegistration({
     target: new BearerConnectionTarget({
@@ -300,6 +308,7 @@ export const prepareBearerConnectionUpdate = Effect.fn(
       label,
       httpBaseUrl,
       wsBaseUrl: deriveWsBaseUrl(httpBaseUrl),
+      ...(fallbackHttpBaseUrls.length > 0 ? { fallbackHttpBaseUrls } : {}),
     }),
     credential: credential.value,
   });
