@@ -275,6 +275,8 @@ export interface ThreadListV2Item {
   readonly snoozed: boolean;
   /** Pinned-block row: renders the pin glyph and offers Unpin. */
   readonly pinned: boolean;
+  /** Snoozed-shelf row waiting on another thread: that thread's title. */
+  readonly snoozeTargetTitle?: string;
   readonly isLast: boolean;
 }
 
@@ -515,9 +517,11 @@ export function buildThreadListV2ListItems(input: {
   const queuedThreadKeys = input.queuedThreadKeys?.size ? input.queuedThreadKeys : undefined;
   const threadItems = input.items.map((item): ThreadListV2ListItem => {
     const snoozeWakeLabelText =
-      item.snoozed && item.thread.snoozedUntil != null && input.snoozeLabelNow !== undefined
-        ? snoozeWakeLabel(item.thread.snoozedUntil, { now: input.snoozeLabelNow })
-        : undefined;
+      item.snoozed && item.snoozeTargetTitle !== undefined
+        ? item.snoozeTargetTitle
+        : item.snoozed && item.thread.snoozedUntil != null && input.snoozeLabelNow !== undefined
+          ? snoozeWakeLabel(item.thread.snoozedUntil, { now: input.snoozeLabelNow })
+          : undefined;
     // The minute clock belongs on the item, not the list's extraData, so the
     // recycler's equality can confine the per-minute re-render to rows whose
     // snooze menu actually shows preset times. The swipe-revealed snooze menu
@@ -833,12 +837,24 @@ export function buildThreadListV2Items(input: {
     });
   }
   const snoozedShelfHeaderIndex = orderedSnoozed.length > 0 ? items.length : null;
+  // Snooze targets resolve among all shells, before scope/search filtering.
+  let threadByKey: Map<string, EnvironmentThreadShell> | null = null;
   for (const thread of visibleSnoozed) {
+    let snoozeTargetTitle: string | undefined;
+    if (thread.snoozedUntilThreadId != null) {
+      threadByKey ??= new Map(
+        input.threads.map((shell) => [`${shell.environmentId}:${shell.id}`, shell]),
+      );
+      snoozeTargetTitle = threadByKey.get(
+        `${thread.environmentId}:${thread.snoozedUntilThreadId}`,
+      )?.title;
+    }
     items.push({
       thread,
       variant: "slim",
       snoozed: true,
       pinned: false,
+      ...(snoozeTargetTitle === undefined ? {} : { snoozeTargetTitle }),
       isLast: false,
     });
   }
@@ -867,4 +883,73 @@ export function buildThreadListV2Items(input: {
     settledShelfHeaderIndex,
     nextSnoozeWakeAt,
   };
+}
+
+export type SnoozeTargetCandidate = NonNullable<SnoozePreset["untilThread"]>;
+
+/** Rows offered under "Until a thread settles"; keeps the native menu usable. */
+export const SNOOZE_TARGET_CANDIDATE_LIMIT = 10;
+
+/**
+ * Threads a snooze can wait on, keyed "env:projectId": unarchived, not
+ * settled, newest first. Keeps one spare slot so a row can drop itself and
+ * still offer the full limit (see `resolveSnoozeTargets`). Unchanged lists
+ * reuse their `previous` array (and the map itself) so memoized rows only
+ * re-render when their menu actually changes.
+ */
+export function buildSnoozeTargetCandidatesByProjectKey(input: {
+  readonly threads: ReadonlyArray<EnvironmentThreadShell>;
+  /** Environments whose server supports thread.snooze untilThreadId. */
+  readonly environmentIds: ReadonlySet<EnvironmentId>;
+  readonly settlementEnvironmentIds: ReadonlySet<EnvironmentId>;
+  readonly previous?: ReadonlyMap<string, ReadonlyArray<SnoozeTargetCandidate>>;
+}): ReadonlyMap<string, ReadonlyArray<SnoozeTargetCandidate>> {
+  const byProjectKey = new Map<string, SnoozeTargetCandidate[]>();
+  const eligible = input.threads
+    .filter(
+      (thread) =>
+        thread.archivedAt === null &&
+        thread.lineage.relationshipToParent !== "subagent" &&
+        input.environmentIds.has(thread.environmentId) &&
+        // Same settled classification as buildThreadListV2Items.
+        !(
+          input.settlementEnvironmentIds.has(thread.environmentId) &&
+          thread.settledOverride === "settled"
+        ),
+    )
+    .sort((left, right) => parseTimestampMs(right.createdAt) - parseTimestampMs(left.createdAt));
+  for (const thread of eligible) {
+    const projectKey = `${thread.environmentId}:${thread.projectId}`;
+    const candidates = byProjectKey.get(projectKey) ?? [];
+    if (candidates.length > SNOOZE_TARGET_CANDIDATE_LIMIT) continue;
+    candidates.push({ id: thread.id, title: thread.title });
+    byProjectKey.set(projectKey, candidates);
+  }
+  const previous = input.previous;
+  if (previous === undefined) return byProjectKey;
+  let unchanged = previous.size === byProjectKey.size;
+  const result = new Map<string, ReadonlyArray<SnoozeTargetCandidate>>();
+  for (const [projectKey, candidates] of byProjectKey) {
+    const prior = previous.get(projectKey);
+    const same =
+      prior !== undefined &&
+      prior.length === candidates.length &&
+      prior.every(
+        (candidate, index) =>
+          candidate.id === candidates[index]!.id && candidate.title === candidates[index]!.title,
+      );
+    result.set(projectKey, same ? prior : candidates);
+    unchanged &&= same;
+  }
+  return unchanged ? previous : result;
+}
+
+/** A row's "Until a thread settles" entries: its project's candidates minus itself. */
+export function resolveSnoozeTargets(
+  candidates: ReadonlyArray<SnoozeTargetCandidate> | undefined,
+  threadId: EnvironmentThreadShell["id"],
+): ReadonlyArray<SnoozeTargetCandidate> {
+  return (candidates ?? [])
+    .filter((candidate) => candidate.id !== threadId)
+    .slice(0, SNOOZE_TARGET_CANDIDATE_LIMIT);
 }

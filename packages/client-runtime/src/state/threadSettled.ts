@@ -1,4 +1,5 @@
 // @effect-diagnostics globalDate:off -- UI snooze presets use local calendar boundaries and Intl labels.
+import type { ThreadId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
 interface SettlementRunLike {
@@ -214,7 +215,13 @@ const HOUR_MS = 60 * 60 * 1_000;
 const EVENING_HOUR = 18;
 const MORNING_HOUR = 9;
 
-export type SnoozePresetId = "hour" | "three-hours" | "evening" | "tomorrow" | "next-week";
+export type SnoozePresetId =
+  | "hour"
+  | "three-hours"
+  | "evening"
+  | "tomorrow"
+  | "next-week"
+  | "until-thread";
 
 export interface SnoozePreset {
   readonly id: SnoozePresetId;
@@ -224,6 +231,26 @@ export interface SnoozePreset {
   readonly whenLabel: string;
   /** ISO wake time. */
   readonly snoozedUntil: string;
+  /** Also wake once this thread settles; snoozedUntil is then the backstop. */
+  readonly untilThread?: { readonly id: ThreadId; readonly title: string };
+}
+
+/** How long a snooze waiting on another thread lasts if that thread never settles. */
+export const SNOOZE_UNTIL_THREAD_BACKSTOP_DAYS = 30;
+
+export function snoozeUntilThreadPreset(
+  now: Date,
+  target: { readonly id: ThreadId; readonly title: string },
+): SnoozePreset {
+  return {
+    id: "until-thread",
+    label: target.title,
+    whenLabel: "",
+    snoozedUntil: new Date(
+      now.getTime() + SNOOZE_UNTIL_THREAD_BACKSTOP_DAYS * DAY_MS,
+    ).toISOString(),
+    untilThread: target,
+  };
 }
 
 function snoozeTimeOfDayLabel(date: Date): string {

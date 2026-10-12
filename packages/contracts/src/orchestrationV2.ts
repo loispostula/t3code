@@ -404,6 +404,7 @@ export const OrchestrationV2AppThread = Schema.Struct({
   unsettledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   snoozedUntil: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   snoozedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
+  snoozedUntilThreadId: Schema.optional(Schema.NullOr(ThreadId)),
   /** Manual wakes restart inactivity without changing the sidebar's sort position. */
   lastSnoozeWakeAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   limitRecovery: Schema.optional(Schema.NullOr(OrchestrationV2LimitRecovery)),
@@ -1993,6 +1994,7 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   unsettledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   snoozedUntil: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   snoozedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
+  snoozedUntilThreadId: Schema.optional(Schema.NullOr(ThreadId)),
   limitRecovery: Schema.optional(Schema.NullOr(OrchestrationV2LimitRecovery)),
   /** Omitted by servers that predate thread pinning. */
   pinnedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
@@ -2769,6 +2771,9 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     snoozedUntil: IsoDateTime,
+    // Wake early once this thread (same environment) settles; snoozedUntil
+    // stays the backstop wake time.
+    untilThreadId: Schema.optional(ThreadId),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.unsnooze"),
@@ -3180,6 +3185,16 @@ const OrchestrationV2InternalCommand = Schema.Union([
         notification: OrchestrationV2Notification,
       }),
     ),
+  }),
+  /**
+   * Wakes a thread snoozed until `untilThreadId` after that thread settled, was archived, or
+   * was deleted. A thread no longer waiting on it is left as it is.
+   */
+  Schema.Struct({
+    type: Schema.Literal("thread.snooze-dependency.wake"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    untilThreadId: ThreadId,
   }),
   /** Records that the provider rollback `requestId` failed for good. */
   Schema.Struct({

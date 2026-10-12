@@ -15,9 +15,14 @@ import {
 import { useRouter } from "@tanstack/react-router";
 import { useCallback, useMemo } from "react";
 
-import { resolveSnoozePresets } from "../components/Sidebar.snooze";
+import {
+  resolveSnoozePresets,
+  resolveSnoozeTargets,
+  type SnoozePreset,
+} from "../components/Sidebar.snooze";
 import {
   buildThreadActionMenuItems,
+  resolveSnoozeMenuChoice,
   threadActionRequiresOperate,
   type ThreadActionMenuId,
 } from "../components/threadActionMenu.logic";
@@ -30,8 +35,10 @@ import {
   readEnvironmentSupportsPinning,
   readEnvironmentSupportsSettlement,
   readEnvironmentSupportsSnooze,
+  readEnvironmentSupportsSnoozeUntilThread,
   readEnvironmentSupportsTitleRegeneration,
   readThreadShell,
+  readThreadShells,
   useProjects,
 } from "../state/entities";
 import { usePrimaryEnvironmentId } from "../state/environments";
@@ -147,6 +154,9 @@ export function useThreadActionMenu(input: {
         };
         const isRegeneratingTitle = thread.titleRegeneration != null;
         const snoozePresets = resolveSnoozePresets(now, timestampFormat);
+        const snoozeTargets = readEnvironmentSupportsSnoozeUntilThread(threadRef.environmentId)
+          ? resolveSnoozeTargets(thread, readThreadShells(), now)
+          : [];
         const items = buildThreadActionMenuItems({
           canOperate: readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope),
           branch: thread.branch ?? null,
@@ -160,6 +170,7 @@ export function useThreadActionMenu(input: {
           isRunning: !threadRuntimeCanArchive(thread.runtime),
           supports,
           snoozePresets,
+          snoozeTargets,
         });
         const clicked = await settlePromise(() => api.contextMenu.show(items, position));
         if (clicked._tag === "Failure" || clicked.value === null) return;
@@ -174,13 +185,13 @@ export function useThreadActionMenu(input: {
           );
           return;
         }
-        if (action.startsWith("snooze:")) {
-          const preset =
+        if (action.startsWith("snooze:") || action.startsWith("snooze-until:")) {
+          const preset: Pick<SnoozePreset, "snoozedUntil" | "untilThread"> | null | undefined =
             action === "snooze:custom"
               ? await requestCustomSnooze()
-              : snoozePresets.find((candidate) => `snooze:${candidate.id}` === action);
+              : resolveSnoozeMenuChoice(action, snoozePresets, snoozeTargets);
           if (!preset) return;
-          const result = await snoozeThread(threadRef, preset.snoozedUntil);
+          const result = await snoozeThread(threadRef, preset.snoozedUntil, preset.untilThread?.id);
           if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
             failureToast("Failed to snooze thread", squashAtomCommandFailure(result));
           }

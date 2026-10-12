@@ -11,6 +11,7 @@ import {
   threadSearchMatchKey,
   type EnvironmentThreadSearchMatch,
 } from "@t3tools/client-runtime/state/thread-search";
+import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
 import { type EnvironmentId, type SidebarProjectGroupingMode } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { useFocusEffect } from "@react-navigation/native";
@@ -59,10 +60,12 @@ import {
 } from "../threads/thread-list-v2-items";
 import { useThreadRowProviderInstanceResolver } from "../threads/thread-provider-instance";
 import {
+  buildSnoozeTargetCandidatesByProjectKey,
   buildThreadListV2Items,
   getThreadListV2OrderedSection,
   buildThreadListV2ListItems,
   threadListV2ListItemsAreEqual,
+  type SnoozeTargetCandidate,
   threadListInboxReturns,
   THREAD_LIST_V2_SETTLED_INITIAL_COUNT,
   THREAD_LIST_V2_SETTLED_PAGE_COUNT,
@@ -110,7 +113,7 @@ interface HomeScreenProps {
   readonly onSettleThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
   readonly onSnoozeThread: (
     thread: EnvironmentThreadShell,
-    snoozedUntil: string,
+    snooze: Pick<SnoozePreset, "snoozedUntil" | "untilThread">,
   ) => Promise<boolean>;
   readonly onUnsnoozeThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
   readonly onUnsettleThread: (thread: EnvironmentThreadShell) => void;
@@ -457,8 +460,11 @@ export function HomeScreen(props: HomeScreenProps) {
   // optimistic holds.
   const handleSettleThread = props.onSettleThread;
   const handleSnoozeThread = useCallback(
-    (thread: EnvironmentThreadShell, snoozedUntil: string) => {
-      void props.onSnoozeThread(thread, snoozedUntil);
+    (
+      thread: EnvironmentThreadShell,
+      snooze: Pick<SnoozePreset, "snoozedUntil" | "untilThread">,
+    ) => {
+      void props.onSnoozeThread(thread, snooze);
     },
     [props.onSnoozeThread],
   );
@@ -551,6 +557,7 @@ export function HomeScreen(props: HomeScreenProps) {
     machineByEnvironmentId,
     settlementEnvironmentIds,
     snoozeEnvironmentIds,
+    snoozeUntilThreadEnvironmentIds,
     pinningEnvironmentIds,
     autoSettleOptOutEnvironmentIds,
     pinReorderEnvironmentIds,
@@ -639,6 +646,18 @@ export function HomeScreen(props: HomeScreenProps) {
     matchedThreadKeys,
     v2ScopedProjectGroup,
   ]);
+  const snoozeTargetCandidatesRef = useRef<
+    ReadonlyMap<string, ReadonlyArray<SnoozeTargetCandidate>> | undefined
+  >(undefined);
+  const snoozeTargetCandidatesByProjectKey = useMemo(() => {
+    snoozeTargetCandidatesRef.current = buildSnoozeTargetCandidatesByProjectKey({
+      threads: props.threads,
+      environmentIds: snoozeUntilThreadEnvironmentIds,
+      settlementEnvironmentIds,
+      previous: snoozeTargetCandidatesRef.current,
+    });
+    return snoozeTargetCandidatesRef.current;
+  }, [props.threads, settlementEnvironmentIds, snoozeUntilThreadEnvironmentIds]);
   // Re-partition the moment the earliest snooze expires (clamped to the
   // signed-32-bit setTimeout range; far-future wakes re-arm at the clamp).
   const nextSnoozeWakeAt = threadListV2Layout.nextSnoozeWakeAt;
@@ -814,6 +833,9 @@ export function HomeScreen(props: HomeScreenProps) {
           settlementSupported={settlementEnvironmentIds.has(thread.environmentId)}
           onSettleThread={handleSettleThread}
           snoozeSupported={snoozeEnvironmentIds.has(thread.environmentId)}
+          snoozeTargetCandidates={snoozeTargetCandidatesByProjectKey.get(
+            scopedProjectKey(thread.environmentId, thread.projectId),
+          )}
           pinningSupported={pinningEnvironmentIds.has(thread.environmentId)}
           autoSettleOptOutSupported={autoSettleOptOutEnvironmentIds.has(thread.environmentId)}
           reorderSupported={
@@ -872,6 +894,7 @@ export function HomeScreen(props: HomeScreenProps) {
       providersByEnvironmentId,
       settlementEnvironmentIds,
       snoozeEnvironmentIds,
+      snoozeTargetCandidatesByProjectKey,
       threadSearchMatchByKey,
       titleRegenerationEnvironmentIds,
       toggleSettledShelf,
@@ -896,6 +919,7 @@ export function HomeScreen(props: HomeScreenProps) {
       savedConnectionsById: props.savedConnectionsById,
       searchQuery: props.searchQuery,
       selectedThreadKey,
+      snoozeTargetCandidatesByProjectKey,
       threadSearchMatchByKey,
       // Rows read it for their reorder menu items.
       workingShelfEnabled,
@@ -906,6 +930,7 @@ export function HomeScreen(props: HomeScreenProps) {
       selectedThreadKey,
       props.savedConnectionsById,
       listEnvironments,
+      snoozeTargetCandidatesByProjectKey,
       threadSearchMatchByKey,
       v2ProjectTitleByProjectKey,
       workingShelfEnabled,

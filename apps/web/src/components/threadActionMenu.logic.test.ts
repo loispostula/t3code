@@ -1,8 +1,10 @@
+import { ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   buildDraftActionMenuItems,
   buildThreadActionMenuItems,
+  resolveSnoozeMenuChoice,
   type ThreadActionMenuState,
 } from "./threadActionMenu.logic";
 
@@ -27,6 +29,15 @@ const baseState: ThreadActionMenuState = {
   snoozePresets: [
     { id: "hour", label: "In 1 hour", whenLabel: "3:00 PM", snoozedUntil: "2026-08-07T15:00:00Z" },
   ],
+  snoozeTargets: [],
+};
+
+const target = {
+  id: "until-thread" as const,
+  label: "Ship the API",
+  whenLabel: "",
+  snoozedUntil: "2026-09-06T14:00:00Z",
+  untilThread: { id: ThreadId.make("thread-api"), title: "Ship the API" },
 };
 
 function ids(state: ThreadActionMenuState): string[] {
@@ -170,6 +181,23 @@ describe("buildThreadActionMenuItems", () => {
     expect(
       ids({ ...baseState, supports: { ...baseState.supports, autoSettleOptOut: false } }),
     ).not.toContain("auto-settle");
+  });
+
+  it("nests snooze-until-thread targets and resolves clicks back to presets", () => {
+    const state = { ...baseState, snoozeTargets: [target] };
+    const snooze = buildThreadActionMenuItems(state).find((item) => item.id === "snooze");
+    expect(snooze?.children?.map((child) => child.id)).toEqual([
+      "snooze:hour",
+      "snooze-until",
+      "snooze:custom",
+    ]);
+    const until = snooze?.children?.find((child) => child.id === "snooze-until");
+    expect(until?.children).toEqual([{ id: "snooze-until:thread-api", label: "Ship the API" }]);
+    expect(resolveSnoozeMenuChoice("snooze-until:thread-api", state.snoozePresets, [target])).toBe(
+      target,
+    );
+    expect(resolveSnoozeMenuChoice("snooze:hour", state.snoozePresets, [target])?.id).toBe("hour");
+    expect(resolveSnoozeMenuChoice("rename", state.snoozePresets, [target])).toBeUndefined();
   });
 
   it("disables snooze when the thread cannot snooze, keeping presets visible", () => {

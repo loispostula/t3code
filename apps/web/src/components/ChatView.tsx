@@ -7151,6 +7151,16 @@ export default function ChatView(props: ChatViewProps) {
     activeThreadShell !== null &&
     supportsSnooze &&
     effectiveSnoozed(activeThreadShell, { now: new Date().toISOString() });
+  const snoozeTargetId = activeThreadShell?.snoozedUntilThreadId ?? null;
+  const snoozeTargetEnvironmentId = activeThreadShell?.environmentId ?? null;
+  const snoozeTargetRef = useMemo(
+    () =>
+      snoozeTargetEnvironmentId === null || snoozeTargetId === null
+        ? null
+        : scopeThreadRef(snoozeTargetEnvironmentId, snoozeTargetId),
+    [snoozeTargetEnvironmentId, snoozeTargetId],
+  );
+  const snoozeTargetShell = useThreadShell(snoozeTargetRef);
   const [snoozeWakeTick, bumpSnoozeWakeTick] = useState(0);
   useEffect(() => {
     void snoozeWakeTick;
@@ -7673,9 +7683,11 @@ export default function ChatView(props: ChatViewProps) {
       <ThreadStatusLine
         icon={<AlarmClockIcon />}
         label={
-          activeThreadShell?.snoozedUntil
-            ? `Snoozed, ${formatRelativeTimeUntilLabel(activeThreadShell.snoozedUntil)}`
-            : "Snoozed"
+          snoozeTargetId !== null
+            ? `Snoozed until "${snoozeTargetShell?.title ?? "a deleted thread"}" settles`
+            : activeThreadShell?.snoozedUntil
+              ? `Snoozed, ${formatRelativeTimeUntilLabel(activeThreadShell.snoozedUntil)}`
+              : "Snoozed"
         }
         actionLabel={isUnsnoozing ? "Waking..." : "Wake now"}
         actionDisabled={!canOperateThread || isUnsnoozing}
@@ -7708,6 +7720,8 @@ export default function ChatView(props: ChatViewProps) {
     activeThreadShell?.snoozedUntil,
     activeThreadSnoozed,
     activeThreadWokeVisible,
+    snoozeTargetId,
+    snoozeTargetShell?.title,
     canOperateThread,
     handleUnsettleActiveThread,
     handleUnsnoozeActiveThread,

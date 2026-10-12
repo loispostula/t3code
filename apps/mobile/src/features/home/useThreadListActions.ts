@@ -1,6 +1,10 @@
 import type { ThreadMoveDestination } from "../threads/threadOrder";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import { canSnooze, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
+import {
+  canSnooze,
+  effectiveSnoozed,
+  type SnoozePreset,
+} from "@t3tools/client-runtime/state/thread-settled";
 import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Haptics from "expo-haptics";
@@ -45,6 +49,15 @@ function environmentSupportsSnooze(environmentId: EnvironmentThreadShell["enviro
   return (
     appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
       .threadSnooze === true
+  );
+}
+
+function environmentSupportsSnoozeUntilThread(
+  environmentId: EnvironmentThreadShell["environmentId"],
+) {
+  return (
+    appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
+      .threadSnoozeUntilThread === true
   );
 }
 
@@ -248,7 +261,10 @@ export function useThreadListActions(): {
   readonly archiveThread: (thread: EnvironmentThreadShell) => void;
   readonly confirmDeleteThread: (thread: EnvironmentThreadShell) => void;
   readonly settleThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
-  readonly snoozeThread: (thread: EnvironmentThreadShell, snoozedUntil: string) => Promise<boolean>;
+  readonly snoozeThread: (
+    thread: EnvironmentThreadShell,
+    snooze: Pick<SnoozePreset, "snoozedUntil" | "untilThread">,
+  ) => Promise<boolean>;
   readonly unsnoozeThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
   readonly unsettleThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
   readonly pinThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
@@ -290,7 +306,10 @@ export function useThreadListActions(): {
     [executeAction],
   );
   const snoozeThread = useCallback(
-    async (thread: EnvironmentThreadShell, snoozedUntil: string) => {
+    async (
+      thread: EnvironmentThreadShell,
+      snooze: Pick<SnoozePreset, "snoozedUntil" | "untilThread">,
+    ) => {
       if (!checkThreadOperationPermission(thread, "Could not snooze thread")) return false;
       const key = scopedThreadKey(thread.environmentId, thread.id);
       if (snoozeInFlightThreadKeys.current.has(key)) {
@@ -302,6 +321,16 @@ export function useThreadListActions(): {
           Alert.alert(
             "Could not snooze thread",
             "This environment's server does not support snoozing yet. Update the server to use Snooze.",
+          );
+          return false;
+        }
+        if (
+          snooze.untilThread !== undefined &&
+          !environmentSupportsSnoozeUntilThread(thread.environmentId)
+        ) {
+          Alert.alert(
+            "Could not snooze thread",
+            "This environment's server does not support snoozing until a thread settles yet. Update the server to use it.",
           );
           return false;
         }
@@ -323,7 +352,10 @@ export function useThreadListActions(): {
               environmentId: thread.environmentId,
               input: {
                 threadId: thread.id,
-                snoozedUntil,
+                snoozedUntil: snooze.snoozedUntil,
+                ...(snooze.untilThread === undefined
+                  ? {}
+                  : { untilThreadId: snooze.untilThread.id }),
               },
             }),
           (result) => result._tag === "Success",

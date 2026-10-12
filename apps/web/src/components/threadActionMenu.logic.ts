@@ -3,8 +3,9 @@ import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled"
 
 /**
  * Ids for the per-thread action menu. Snooze presets are dispatched as
- * `snooze:<presetId>` so the union stays closed while the preset list
- * remains data-driven.
+ * `snooze:<presetId>` and snooze-until-thread targets as
+ * `snooze-until:<threadId>`, so the union stays closed while both lists
+ * remain data-driven.
  */
 export type ThreadActionMenuId =
   | "new-thread-on-branch"
@@ -19,6 +20,8 @@ export type ThreadActionMenuId =
   | "auto-settle:disabled"
   | "snooze"
   | `snooze:${string}`
+  | "snooze-until"
+  | `snooze-until:${string}`
   | "unsnooze"
   | "rename"
   | "regenerate-title"
@@ -99,6 +102,20 @@ export interface ThreadActionMenuState {
     readonly titleRegeneration: boolean;
   };
   readonly snoozePresets: ReadonlyArray<SnoozePreset>;
+  /** until-thread presets; empty when the server cannot take them. */
+  readonly snoozeTargets: ReadonlyArray<SnoozePreset>;
+}
+
+/** The preset a clicked snooze menu id stands for, if any. */
+export function resolveSnoozeMenuChoice(
+  id: string,
+  presets: ReadonlyArray<SnoozePreset>,
+  targets: ReadonlyArray<SnoozePreset>,
+): SnoozePreset | undefined {
+  return (
+    presets.find((preset) => `snooze:${preset.id}` === id) ??
+    targets.find((target) => `snooze-until:${target.untilThread?.id}` === id)
+  );
 }
 
 /** Local navigation, read markers, and copying remain available to read-only clients. */
@@ -163,7 +180,24 @@ export function buildThreadActionMenuItems(
                     id: `snooze:${preset.id}` as const,
                     label: `${preset.label} (${preset.whenLabel})`,
                   })),
-                  { id: "snooze:custom" as const, label: "Custom…", separatorBefore: true },
+                  ...(state.snoozeTargets.length > 0
+                    ? [
+                        {
+                          id: "snooze-until" as const,
+                          label: "Until thread settles",
+                          separatorBefore: true,
+                          children: state.snoozeTargets.map((target) => ({
+                            id: `snooze-until:${target.untilThread?.id}` as const,
+                            label: target.label,
+                          })),
+                        },
+                      ]
+                    : []),
+                  {
+                    id: "snooze:custom" as const,
+                    label: "Custom…",
+                    separatorBefore: state.snoozeTargets.length === 0,
+                  },
                 ],
               },
         ]

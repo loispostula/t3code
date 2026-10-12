@@ -4609,6 +4609,188 @@ it.layer(layerSharedApplicationDataPlaneTest)("snooze projection", (it) => {
   );
 });
 
+it.layer(layerSharedApplicationDataPlaneTest)("snooze until thread", (it) => {
+  const snoozedUntil = "2099-07-25T09:00:00.000Z";
+  const setup = (prefix: string, threadNames: ReadonlyArray<string>) =>
+    Effect.gen(function* () {
+      const projects = yield* ProjectService.ProjectService;
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projectId = ProjectId.make(`${prefix}-project`);
+      yield* projects.create({
+        commandId: CommandId.make(`${prefix}-project-create`),
+        projectId,
+        title: "Snooze until thread",
+        workspaceRoot: `/tmp/${prefix}-project`,
+      });
+      const threadIds = threadNames.map((name) => ThreadId.make(`${prefix}-${name}`));
+      for (const threadId of threadIds) {
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`${threadId}-create`),
+          threadId,
+          projectId,
+          title: threadId,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+        });
+      }
+      return threadIds;
+    });
+  const snoozeUntil = (threadId: ThreadId, untilThreadId: ThreadId, suffix = "snooze") =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      return yield* orchestrator.dispatch({
+        type: "thread.snooze",
+        commandId: CommandId.make(`${threadId}-${suffix}`),
+        threadId,
+        snoozedUntil,
+        untilThreadId,
+      });
+    });
+  const readThread = (threadId: ThreadId) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      return (yield* orchestrator.getThreadProjection(threadId)).thread;
+    });
+  const assertWoke = (threadId: ThreadId) =>
+    Effect.gen(function* () {
+      const thread = yield* readThread(threadId);
+      assert.isNull(thread.snoozedUntil);
+      assert.isNull(thread.snoozedAt);
+      assert.isNull(thread.snoozedUntilThreadId);
+      assert.deepEqual(thread.lastSnoozeWakeAt, yield* DateTime.now);
+    });
+
+  it.effect("persists the target and rejects unusable targets", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const [waiter, target, archived, settled] = yield* setup("snooze-target-validation", [
+        "waiter",
+        "target",
+        "archived",
+        "settled",
+      ]);
+      const [otherProject] = yield* setup("snooze-target-validation-other", ["thread"]);
+      yield* orchestrator.dispatch({
+        type: "thread.archive",
+        commandId: CommandId.make(`${archived}-archive`),
+        threadId: archived!,
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.settle",
+        commandId: CommandId.make(`${settled}-settle`),
+        threadId: settled!,
+      });
+      for (const [untilThreadId, cause] of [
+        [waiter!, "itself"],
+        [ThreadId.make("snooze-target-validation-missing"), "missing thread"],
+        [archived!, "archived thread"],
+        [settled!, "already settled thread"],
+        [otherProject!, "from another project"],
+      ] as const) {
+        const error = yield* snoozeUntil(waiter!, untilThreadId, `snooze-${untilThreadId}`).pipe(
+          Effect.flip,
+        );
+        assert.include(String(error.cause), cause);
+      }
+
+      yield* snoozeUntil(waiter!, target!);
+      const snoozed = yield* readThread(waiter!);
+      assert.equal(snoozed.snoozedUntilThreadId, target);
+      const shell = yield* orchestrator.getShellSnapshot();
+      assert.equal(
+        shell.threads.find((thread) => thread.id === waiter)?.snoozedUntilThreadId,
+        target,
+      );
+
+      // Re-snoozing to the same time without a target is a new snooze, not a duplicate.
+      yield* orchestrator.dispatch({
+        type: "thread.snooze",
+        commandId: CommandId.make(`${waiter}-snooze-time-only`),
+        threadId: waiter!,
+        snoozedUntil,
+      });
+      assert.isNull((yield* readThread(waiter!)).snoozedUntilThreadId);
+    }),
+  );
+
+  it.effect(
+    "wakes the waiting thread when its target settles, but not on an unrelated settle",
+    () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const [waiter, other, target, unrelated] = yield* setup("snooze-target-settle", [
+          "waiter",
+          "other",
+          "target",
+          "unrelated",
+        ]);
+        yield* snoozeUntil(waiter!, target!);
+        yield* snoozeUntil(other!, unrelated!);
+
+        yield* orchestrator.dispatch({
+          type: "thread.settle",
+          commandId: CommandId.make(`${target}-settle`),
+          threadId: target!,
+        });
+
+        yield* assertWoke(waiter!);
+        const untouched = yield* readThread(other!);
+        assert.equal(untouched.snoozedUntilThreadId, unrelated);
+        assert.equal(DateTime.formatIso(untouched.snoozedUntil!), snoozedUntil);
+      }),
+  );
+
+  it.effect("wakes the waiting thread when its target auto-settles", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const [waiter, target] = yield* setup("snooze-target-auto-settle", ["waiter", "target"]);
+      yield* snoozeUntil(waiter!, target!);
+
+      yield* orchestrator.dispatch({
+        type: "thread.auto-settle",
+        commandId: CommandId.make(`${target}-auto-settle`),
+        threadId: target!,
+        snapshotAt: (yield* readThread(target!)).updatedAt,
+      });
+
+      yield* assertWoke(waiter!);
+    }),
+  );
+
+  it.effect("wakes the waiting thread when its target is archived or deleted", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const [archiveWaiter, archived, deleteWaiter, deleted] = yield* setup(
+        "snooze-target-removed",
+        ["archive-waiter", "archived", "delete-waiter", "deleted"],
+      );
+      yield* snoozeUntil(archiveWaiter!, archived!);
+      yield* snoozeUntil(deleteWaiter!, deleted!);
+
+      yield* orchestrator.dispatch({
+        type: "thread.archive",
+        commandId: CommandId.make(`${archived}-archive`),
+        threadId: archived!,
+      });
+      yield* assertWoke(archiveWaiter!);
+      assert.equal((yield* readThread(deleteWaiter!)).snoozedUntilThreadId, deleted);
+
+      yield* orchestrator.dispatch({
+        type: "thread.delete",
+        commandId: CommandId.make(`${deleted}-delete`),
+        threadId: deleted!,
+      });
+      yield* assertWoke(deleteWaiter!);
+    }),
+  );
+});
+
 it.layer(layerSharedApplicationDataPlaneTest)("visited projection", (it) => {
   it.effect("carries the visited watermark through the V2 shell projection", () =>
     Effect.gen(function* () {

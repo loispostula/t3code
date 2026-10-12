@@ -1,15 +1,19 @@
 import type { TimestampFormat } from "@t3tools/contracts/settings";
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import {
   resolveSnoozePresets as resolveSharedSnoozePresets,
+  snoozeUntilThreadPreset,
   snoozeWakeLabel,
   type SnoozePreset,
 } from "@t3tools/client-runtime/state/thread-settled";
+import { sortThreads } from "@t3tools/client-runtime/state/thread-sort";
 
 import { formatShortTimestamp, parseTimestampDate } from "../timestampFormat";
 
 export { snoozeWakeLabel, type SnoozePreset };
 
 const DAY_MS = 24 * 60 * 60 * 1_000;
+const MAX_SNOOZE_TARGETS = 10;
 
 function timeOfDayLabel(date: Date, timestampFormat: TimestampFormat): string {
   return formatShortTimestamp(date.toISOString(), timestampFormat);
@@ -54,4 +58,54 @@ export function snoozeWakeDescription(
   if (dayDelta < 7) return `${weekday} ${time}`;
   const date = wake.toLocaleDateString(undefined, { month: "short", day: "numeric" });
   return `${date}, ${time}`;
+}
+
+/**
+ * until-thread presets for the threads a snooze can wait on: same project,
+ * visible in the sidebar and not settled, most recently active first.
+ */
+export function resolveSnoozeTargets(
+  thread: Pick<EnvironmentThreadShell, "environmentId" | "projectId" | "id">,
+  threads: ReadonlyArray<
+    Pick<
+      EnvironmentThreadShell,
+      | "environmentId"
+      | "projectId"
+      | "id"
+      | "title"
+      | "archivedAt"
+      | "settledOverride"
+      | "lineage"
+      | "createdAt"
+      | "updatedAt"
+      | "latestUserMessageAt"
+    >
+  >,
+  now: Date,
+): ReadonlyArray<SnoozePreset> {
+  const candidates = threads.filter(
+    (candidate) =>
+      candidate.environmentId === thread.environmentId &&
+      candidate.projectId === thread.projectId &&
+      candidate.id !== thread.id &&
+      candidate.archivedAt === null &&
+      candidate.settledOverride !== "settled" &&
+      candidate.lineage.relationshipToParent !== "subagent",
+  );
+  return sortThreads(candidates, "updated_at")
+    .slice(0, MAX_SNOOZE_TARGETS)
+    .map((candidate) => snoozeUntilThreadPreset(now, { id: candidate.id, title: candidate.title }));
+}
+
+/** Tooltip naming the thread a snooze waits on; null for timer-only snoozes. */
+export function snoozeTargetTooltip(
+  thread: Pick<EnvironmentThreadShell, "environmentId" | "snoozedUntilThreadId">,
+  threads: ReadonlyArray<Pick<EnvironmentThreadShell, "environmentId" | "id" | "title">>,
+): string | null {
+  const targetId = thread.snoozedUntilThreadId;
+  if (targetId === null) return null;
+  const target = threads.find(
+    (candidate) => candidate.environmentId === thread.environmentId && candidate.id === targetId,
+  );
+  return `Until "${target?.title ?? "a deleted thread"}" settles`;
 }

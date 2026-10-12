@@ -28,10 +28,12 @@ import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import { makeRawThreadShell, makeThreadShellFixture } from "../../test-fixtures";
 import { threadJumpTarget } from "../keyboard/threadKeyboardShortcuts";
 import {
+  buildSnoozeTargetCandidatesByProjectKey,
   buildThreadListV2Items,
   buildThreadListV2ListItems,
   getThreadListV2OrderedSection,
   isThreadListV2ListItem,
+  resolveSnoozeTargets,
   resolveThreadListV2SnoozeMenuSelection,
   resolveThreadListV2SnoozeGateExpiryMs,
   resolveThreadListV2Status,
@@ -39,6 +41,7 @@ import {
   sortThreadsForListV2,
   threadListV2ListItemsAreEqual,
   threadHasUnseenCompletion,
+  snoozeWakeLabel,
   type ThreadListV2ListItem,
 } from "./threadListV2";
 
@@ -2435,5 +2438,115 @@ describe("Working section beta", () => {
       "v2-settled-shelf",
       "settled",
     ]);
+  });
+});
+
+describe("snooze until another thread settles", () => {
+  const projectId = ProjectId.make("project-1");
+  const projectKey = `${environmentId}:${projectId}`;
+  const makeProjectThread = (input: Parameters<typeof makeThread>[0]) =>
+    makeThread({ projectId, ...input });
+  const input = {
+    environmentIds: new Set([environmentId]),
+    settlementEnvironmentIds: new Set([environmentId]),
+  };
+  const threads = [
+    makeProjectThread({
+      id: ThreadId.make("older"),
+      title: "Older",
+      createdAt: "2026-06-01T00:00:00.000Z",
+    }),
+    makeProjectThread({
+      id: ThreadId.make("newer"),
+      title: "Newer",
+      createdAt: "2026-06-01T06:00:00.000Z",
+    }),
+    makeProjectThread({
+      id: ThreadId.make("settled"),
+      title: "Settled",
+      settledOverride: "settled",
+    }),
+    makeProjectThread({ id: ThreadId.make("archived"), title: "Archived", archivedAt: NOW }),
+    makeProjectThread({
+      id: ThreadId.make("other-project"),
+      title: "Other project",
+      projectId: ProjectId.make("project-other"),
+    }),
+  ];
+
+  it("offers unarchived, unsettled threads per project, newest first, minus the row itself", () => {
+    const candidates = buildSnoozeTargetCandidatesByProjectKey({ ...input, threads });
+
+    expect(candidates.get(projectKey)?.map((candidate) => candidate.id)).toEqual([
+      "newer",
+      "older",
+    ]);
+    expect(
+      resolveSnoozeTargets(candidates.get(projectKey), ThreadId.make("newer")).map(
+        (candidate) => candidate.id,
+      ),
+    ).toEqual(["older"]);
+  });
+
+  it("caps each row at ten targets even after dropping itself", () => {
+    const many = Array.from({ length: 15 }, (_, index) =>
+      makeProjectThread({
+        id: ThreadId.make(`thread-${index}`),
+        title: `Thread ${index}`,
+        createdAt: new Date(Date.parse(NOW) - index * 60_000).toISOString(),
+      }),
+    );
+    const candidates = buildSnoozeTargetCandidatesByProjectKey({ ...input, threads: many }).get(
+      projectKey,
+    );
+
+    const targets = resolveSnoozeTargets(candidates, ThreadId.make("thread-0"));
+    expect(targets).toHaveLength(10);
+    expect(targets[0]?.id).toBe("thread-1");
+  });
+
+  it("reuses the previous map when nothing changed", () => {
+    const previous = buildSnoozeTargetCandidatesByProjectKey({ ...input, threads });
+
+    expect(buildSnoozeTargetCandidatesByProjectKey({ ...input, threads, previous })).toBe(previous);
+  });
+
+  it("offers nothing on servers without snooze-until-thread", () => {
+    expect(
+      buildSnoozeTargetCandidatesByProjectKey({ ...input, environmentIds: new Set(), threads })
+        .size,
+    ).toBe(0);
+  });
+
+  it("labels a waiting row with its target's title, else its wake time", () => {
+    const waiting = makeProjectThread({
+      id: ThreadId.make("waiting"),
+      title: "Waiting",
+      snoozedUntil: "2026-07-01T00:00:00.000Z",
+      snoozedAt: "2026-06-01T12:00:00.000Z",
+      snoozedUntilThreadId: ThreadId.make("newer"),
+    });
+    const labels = (shells: ReadonlyArray<EnvironmentThreadShell>) => {
+      const layout = buildThreadListV2Items({
+        threads: shells,
+        environmentId: null,
+        searchQuery: "",
+        snoozedShelfExpanded: true,
+        now: NOW,
+      });
+      return buildThreadListV2ListItems({
+        items: layout.items,
+        pendingTasks: [],
+        snoozedCount: layout.snoozedCount,
+        snoozedShelfExpanded: true,
+        snoozedShelfHeaderIndex: layout.snoozedShelfHeaderIndex,
+        snoozeLabelNow: NOW,
+      }).flatMap((item) =>
+        item.type === "v2-thread" && item.item.snoozed ? [item.snoozeWakeLabelText] : [],
+      );
+    };
+
+    expect(labels([waiting, ...threads])).toEqual(["Newer"]);
+    expect(labels([waiting])).toEqual([snoozeWakeLabel("2026-07-01T00:00:00.000Z", { now: NOW })]);
   });
 });

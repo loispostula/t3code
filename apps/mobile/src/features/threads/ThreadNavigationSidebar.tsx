@@ -66,10 +66,12 @@ import {
 } from "./thread-list-v2-items";
 import { useThreadRowProviderInstanceResolver } from "./thread-provider-instance";
 import {
+  buildSnoozeTargetCandidatesByProjectKey,
   buildThreadListV2Items,
   getThreadListV2OrderedSection,
   buildThreadListV2ListItems,
   isThreadListV2ListItem,
+  type SnoozeTargetCandidate,
   threadListV2ListItemsAreEqual,
   threadListInboxReturns,
   THREAD_LIST_V2_SETTLED_INITIAL_COUNT,
@@ -321,6 +323,7 @@ function ThreadNavigationSidebarPane(
     machineByEnvironmentId,
     settlementEnvironmentIds,
     snoozeEnvironmentIds,
+    snoozeUntilThreadEnvironmentIds,
     pinningEnvironmentIds,
     autoSettleOptOutEnvironmentIds,
     pinReorderEnvironmentIds,
@@ -407,6 +410,18 @@ function ThreadNavigationSidebarPane(
     threads,
     selectedProjectScope,
   ]);
+  const snoozeTargetCandidatesRef = useRef<
+    ReadonlyMap<string, ReadonlyArray<SnoozeTargetCandidate>> | undefined
+  >(undefined);
+  const snoozeTargetCandidatesByProjectKey = useMemo(() => {
+    snoozeTargetCandidatesRef.current = buildSnoozeTargetCandidatesByProjectKey({
+      threads: threads,
+      environmentIds: snoozeUntilThreadEnvironmentIds,
+      settlementEnvironmentIds,
+      previous: snoozeTargetCandidatesRef.current,
+    });
+    return snoozeTargetCandidatesRef.current;
+  }, [threads, settlementEnvironmentIds, snoozeUntilThreadEnvironmentIds]);
   // Re-partition the moment the earliest snooze expires (clamped to the
   // signed-32-bit setTimeout range; far-future wakes re-arm at the clamp).
   const nextSnoozeWakeAt = threadListV2Layout.nextSnoozeWakeAt;
@@ -608,6 +623,7 @@ function ThreadNavigationSidebarPane(
       projectTitleByProjectKey,
       savedConnectionsById,
       listEnvironments,
+      snoozeTargetCandidatesByProjectKey,
       threadSearchMatchByKey,
       // Rows read it for their reorder menu items.
       workingShelfEnabled,
@@ -618,6 +634,7 @@ function ThreadNavigationSidebarPane(
       projectTitleByProjectKey,
       savedConnectionsById,
       listEnvironments,
+      snoozeTargetCandidatesByProjectKey,
       threadSearchMatchByKey,
       workingShelfEnabled,
     ],
@@ -732,6 +749,7 @@ function ThreadNavigationSidebarPane(
               settlementSupported={settlementEnvironmentIds.has(thread.environmentId)}
               onSettleThread={settleThread}
               snoozeSupported={snoozeEnvironmentIds.has(thread.environmentId)}
+              snoozeTargetCandidates={snoozeTargetCandidatesByProjectKey.get(scopeKey)}
               pinningSupported={pinningEnvironmentIds.has(thread.environmentId)}
               autoSettleOptOutSupported={autoSettleOptOutEnvironmentIds.has(thread.environmentId)}
               reorderSupported={
@@ -829,6 +847,7 @@ function ThreadNavigationSidebarPane(
       showMoreSettled,
       sidebarScrollGesture,
       snoozeEnvironmentIds,
+      snoozeTargetCandidatesByProjectKey,
       snoozeThread,
       toggleSettledShelf,
       toggleSnoozedShelf,

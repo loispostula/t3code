@@ -284,6 +284,14 @@ export function readEnvironmentSupportsSnooze(environmentId: EnvironmentId): boo
   );
 }
 
+/** Whether the environment's server takes untilThreadId on thread.snooze. */
+export function readEnvironmentSupportsSnoozeUntilThread(environmentId: EnvironmentId): boolean {
+  return (
+    appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
+      .threadSnoozeUntilThread === true
+  );
+}
+
 /** Whether the environment's server understands thread.visit/mark-unread and
     projects lastVisitedAt on thread shells. Same version-skew contract as
     settlement: against older servers, clients keep the browser-local visited

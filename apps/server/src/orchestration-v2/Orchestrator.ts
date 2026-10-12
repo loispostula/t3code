@@ -442,6 +442,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.unsettle":
     case "thread.snooze":
     case "thread.unsnooze":
+    case "thread.snooze-dependency.wake":
     case "thread.auto-settle.set":
     case "thread.pin":
     case "thread.unpin":
@@ -2415,6 +2416,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           | "thread.unsettle"
           | "thread.snooze"
           | "thread.unsnooze"
+          | "thread.snooze-dependency.wake"
           | "thread.auto-settle.set"
           | "thread.pin"
           | "thread.unpin"
@@ -2805,6 +2807,35 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: `Thread ${command.threadId} has a queued run and cannot be snoozed.`,
         });
       }
+      if (command.untilThreadId !== undefined) {
+        const target = yield* projectionStore
+          .getThread(command.untilThreadId)
+          .pipe(
+            Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed(null) }),
+            mapDispatchError(command),
+          );
+        const unavailable =
+          command.untilThreadId === command.threadId
+            ? "itself"
+            : target === null || target.deletedAt !== null
+              ? `missing thread ${command.untilThreadId}`
+              : // Project deletion removes threads without the orchestrator,
+                // so a cross-project target could vanish without waking us.
+                target.projectId !== projection.thread.projectId
+                ? `thread ${command.untilThreadId} from another project`
+                : target.archivedAt !== null
+                  ? `archived thread ${command.untilThreadId}`
+                  : target.settledOverride === "settled" || target.settledAt !== null
+                    ? `already settled thread ${command.untilThreadId}`
+                    : null;
+        if (unavailable !== null) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: `Thread ${command.threadId} cannot be snoozed until ${unavailable}.`,
+          });
+        }
+      }
       snoozedUntil = parsedSnoozedUntil.value;
     }
     let markUnreadVisitedAt: DateTime.Utc | null = null;
@@ -2862,25 +2893,36 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           };
         }
         case "thread.snooze": {
+          const snoozedUntilThreadId = command.untilThreadId ?? null;
           const sameWakeTime =
             thread.snoozedUntil != null &&
             snoozedUntil !== null &&
-            DateTime.toEpochMillis(thread.snoozedUntil) === DateTime.toEpochMillis(snoozedUntil);
+            DateTime.toEpochMillis(thread.snoozedUntil) === DateTime.toEpochMillis(snoozedUntil) &&
+            (thread.snoozedUntilThreadId ?? null) === snoozedUntilThreadId;
           const existingSnoozedAt = sameWakeTime ? (thread.snoozedAt ?? null) : null;
           return {
             ...thread,
             snoozedUntil,
+            snoozedUntilThreadId,
             limitRecovery: thread.limitRecovery ? { ...thread.limitRecovery, snooze: false } : null,
             snoozedAt: existingSnoozedAt ?? now,
             updatedAt: existingSnoozedAt === null ? now : thread.updatedAt,
           };
         }
+        case "thread.snooze-dependency.wake":
         case "thread.unsnooze": {
+          if (
+            command.type === "thread.snooze-dependency.wake" &&
+            thread.snoozedUntilThreadId !== command.untilThreadId
+          ) {
+            return thread;
+          }
           const alreadyAwake = thread.snoozedUntil == null;
           return {
             ...thread,
             snoozedUntil: null,
             snoozedAt: null,
+            snoozedUntilThreadId: null,
             lastSnoozeWakeAt: alreadyAwake ? thread.lastSnoozeWakeAt : now,
             updatedAt: alreadyAwake ? thread.updatedAt : now,
           };
@@ -2913,6 +2955,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             settledAt: thread.settledOverride === "settled" ? null : thread.settledAt,
             snoozedUntil: null,
             snoozedAt: null,
+            snoozedUntilThreadId: null,
             lastSnoozeWakeAt: thread.snoozedUntil == null ? thread.lastSnoozeWakeAt : now,
             updatedAt: alreadyPinned && !promotes ? thread.updatedAt : now,
           };
@@ -2979,13 +3022,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   // Recovery changes acknowledge the same stopped run; keep its
                   // metadata timestamp from appearing as a fresh failure wake.
                   snoozedAt: now,
+                  snoozedUntilThreadId: null,
                 }
               : command.limitRecovery !== undefined &&
                   thread.limitRecovery?.snooze &&
                   thread.snoozedUntil != null &&
                   DateTime.toEpochMillis(thread.snoozedUntil) ===
                     Date.parse(thread.limitRecovery.resetAt)
-                ? { snoozedUntil: null, snoozedAt: null, lastSnoozeWakeAt: now }
+                ? {
+                    snoozedUntil: null,
+                    snoozedAt: null,
+                    snoozedUntilThreadId: null,
+                    lastSnoozeWakeAt: now,
+                  }
                 : {}),
             ...(command.branch === undefined ? {} : { branch: command.branch }),
             ...(command.worktreePath === undefined ? {} : { worktreePath: command.worktreePath }),
@@ -3244,6 +3293,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         case "thread.snooze":
           return "thread.snoozed" as const;
         case "thread.unsnooze":
+        case "thread.snooze-dependency.wake":
           return "thread.unsnoozed" as const;
         case "thread.auto-settle.set":
           return "thread.auto-settle-set" as const;
@@ -4645,6 +4695,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ...projection.thread,
           snoozedUntil: null,
           snoozedAt: null,
+          snoozedUntilThreadId: null,
           updatedAt: now,
         };
         yield* emit(
@@ -10685,6 +10736,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.unsettle":
       case "thread.snooze":
       case "thread.unsnooze":
+      case "thread.snooze-dependency.wake":
       case "thread.auto-settle.set":
       case "thread.pin":
       case "thread.unpin":
@@ -11093,6 +11145,36 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     } satisfies OrchestratorV2DispatchResult;
   });
 
+  // Runs after the settling command released its lock. Each wake takes the waiting thread's
+  // own lock, so threads snoozed until each other cannot deadlock.
+  const wakeSnoozeDependents = (command: OrchestrationV2ServerCommand) =>
+    command.type === "thread.settle" ||
+    command.type === "thread.auto-settle" ||
+    command.type === "thread.archive" ||
+    command.type === "thread.delete"
+      ? projectionStore.getSnoozeDependentThreadIds(command.threadId).pipe(
+          Effect.flatMap((threadIds) =>
+            Effect.forEach(
+              threadIds,
+              (threadId) =>
+                threadDispatch
+                  .withLock(
+                    threadId,
+                    dispatchWithReceiptEffect({
+                      type: "thread.snooze-dependency.wake",
+                      commandId: CommandId.make(`${command.commandId}:snooze-wake:${threadId}`),
+                      threadId,
+                      untilThreadId: command.threadId,
+                    }),
+                  )
+                  .pipe(Effect.ignore({ log: "Warn", message: "Failed to wake a snoozed thread" })),
+              { discard: true },
+            ),
+          ),
+          Effect.ignore({ log: "Warn", message: "Failed to wake threads snoozed until a thread" }),
+        )
+      : Effect.void;
+
   const dispatchWithReceipt = (command: OrchestrationV2ServerCommand) =>
     Effect.gen(function* () {
       const dispatch = threadDispatch.withLock(
@@ -11113,7 +11195,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       return yield* parentThreadId === undefined
         ? dispatch
         : threadDispatch.withLock(parentThreadId, dispatch);
-    });
+    }).pipe(Effect.tap(() => wakeSnoozeDependents(command)));
 
   const handleTerminalRun = (stored: OrchestrationV2StoredEvent) =>
     Effect.gen(function* () {
