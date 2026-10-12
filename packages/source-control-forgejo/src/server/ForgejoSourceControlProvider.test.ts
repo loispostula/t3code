@@ -1359,3 +1359,63 @@ it.effect(
       }
     }),
 );
+
+it.effect("narrows the pull request listing to the head branch server-side", () => {
+  const paths: string[] = [];
+  const pull = {
+    number: 7,
+    title: "PR 7",
+    body: "",
+    html_url: "https://forge.test/owner/repo/pulls/7",
+    user: null,
+    state: "open",
+    merged: false,
+    head: { ref: "feature/branch", sha: "head", repo: null },
+    base: { ref: "main", sha: "base", repo: null },
+    created_at: "2026-09-16T00:00:00Z",
+    updated_at: "2026-09-16T00:00:00Z",
+    closed_at: null,
+    merged_at: null,
+    labels: [],
+  };
+  return Effect.gen(function* () {
+    const provider = yield* ForgejoSourceControlProvider.make;
+    const results = yield* provider.listChangeRequests({
+      cwd: "/repo",
+      headSelector: "feature/branch",
+      state: "all",
+      limit: 20,
+    });
+    assert.deepStrictEqual(
+      results.map((result) => result.number),
+      [7],
+    );
+    // The scan stops once the server answers an empty page, which only stays
+    // cheap while the server does the branch filtering.
+    assert.strictEqual(paths.length, 2);
+    for (const path of paths) assert.include(path, "head=feature%2Fbranch");
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        Layer.succeed(FileSystem.FileSystem, FileSystem.makeNoop({})),
+        TestSourceControlHost.layer(),
+        Layer.mock(ForgejoCli.ForgejoCli)({
+          resolveRepository: () =>
+            Effect.succeed({
+              command: "tea" as const,
+              login: "forge",
+              repository: "owner/repo",
+              baseUrl: "https://forge.test",
+            }),
+          api: (input) => {
+            paths.push(input.path);
+            return encodeJsonEffect(paths.length === 1 ? [pull] : []).pipe(
+              Effect.orDie,
+              Effect.map(processOutput),
+            );
+          },
+        }),
+      ),
+    ),
+  );
+});
