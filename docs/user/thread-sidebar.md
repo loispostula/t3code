@@ -329,3 +329,8 @@ several selected threads together. Choose **Wake thread** to bring a thread back
 A snoozed thread keeps working and stays hidden until its wake time, even while
 its agent wakes itself for background work. It comes back early only when it needs
 an approval or answer from you, when a run fails, or when you send it a message.
+
+Choose **Snooze → Until thread settles** to hide a thread until another thread in the same
+project is settled, archived, or deleted, whether you settle it yourself or it settles
+automatically. The snoozed row shows **Waiting**; hover it to see which thread it waits on. If
+the other thread never settles, the snoozed thread comes back after 30 days.

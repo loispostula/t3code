@@ -77,7 +77,9 @@ import { useThreadRowProviderInstanceResolver } from "./thread-provider-instance
 import type { ThreadPrPresentation } from "../../state/thread-pr-presentation";
 import { ThreadPrDemandProvider } from "../../state/thread-pr-demand";
 import {
+  buildSnoozeTargetCandidatesByProjectKey,
   isThreadListV2ListItem,
+  type SnoozeTargetCandidate,
   threadListV2ListItemsAreEqual,
   THREAD_LIST_V2_SETTLED_INITIAL_COUNT,
   THREAD_LIST_V2_SETTLED_PAGE_COUNT,
@@ -287,6 +289,7 @@ function ThreadNavigationSidebarPane(
     machineByEnvironmentId,
     settlementEnvironmentIds,
     snoozeEnvironmentIds,
+    snoozeUntilThreadEnvironmentIds,
     snoozePresetsByEnvironmentId,
     pinningEnvironmentIds,
     autoSettleOptOutEnvironmentIds,
@@ -323,6 +326,20 @@ function ThreadNavigationSidebarPane(
     settledShelfExpanded,
     selectedThreadKey: props.selectedThreadKey ?? null,
   });
+  // Stored as state so unchanged projects keep their candidate arrays and memoized rows skip
+  // re-rendering when unrelated thread fields change.
+  const [snoozeTargetCandidatesCache, setSnoozeTargetCandidatesCache] = useState<
+    ReadonlyMap<string, ReadonlyArray<SnoozeTargetCandidate>> | undefined
+  >(undefined);
+  const snoozeTargetCandidatesByProjectKey = buildSnoozeTargetCandidatesByProjectKey({
+    threads,
+    environmentIds: snoozeUntilThreadEnvironmentIds,
+    settlementEnvironmentIds,
+    previous: snoozeTargetCandidatesCache,
+  });
+  if (snoozeTargetCandidatesByProjectKey !== snoozeTargetCandidatesCache) {
+    setSnoozeTargetCandidatesCache(snoozeTargetCandidatesByProjectKey);
+  }
   const listItems: readonly SidebarListItem[] =
     settledShelfExpanded && threadListV2Layout.hiddenSettledCount > 0
       ? [
@@ -468,6 +485,7 @@ function ThreadNavigationSidebarPane(
     projectTitleByProjectKey,
     savedConnectionsById,
     listEnvironments,
+    snoozeTargetCandidatesByProjectKey,
     threadSearchMatchByKey,
     workingShelfEnabled,
   };
@@ -591,6 +609,7 @@ function ThreadNavigationSidebarPane(
             onSettleThread={settleThread}
             snoozeSupported={snoozeEnvironmentIds.has(thread.environmentId)}
             snoozePresets={snoozePresetsByEnvironmentId.get(thread.environmentId)}
+            snoozeTargetCandidates={snoozeTargetCandidatesByProjectKey.get(scopeKey)}
             pinningSupported={pinningEnvironmentIds.has(thread.environmentId)}
             autoSettleOptOutSupported={autoSettleOptOutEnvironmentIds.has(thread.environmentId)}
             reorderSupported={

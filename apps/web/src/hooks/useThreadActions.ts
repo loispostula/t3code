@@ -39,6 +39,7 @@ import { readLocalApi } from "../localApi";
 import {
   readEnvironmentServerConfigLoaded,
   readEnvironmentSupportsAutoSettleOptOut,
+  readEnvironmentSupportsSnoozeUntilThread,
   readEnvironmentThreadRefs,
   readProject,
   readThreadShell,
@@ -856,8 +857,16 @@ export function useThreadActions() {
     });
   };
 
-  const snoozeThread = async (target: ScopedThreadRef, snoozedUntil: string) => {
-    if (!readEnvironmentServerConfigLoaded(target.environmentId)) {
+  const snoozeThread = async (
+    target: ScopedThreadRef,
+    snoozedUntil: string,
+    untilThreadId?: ThreadId,
+  ) => {
+    if (
+      !readEnvironmentServerConfigLoaded(target.environmentId) ||
+      (untilThreadId !== undefined &&
+        !readEnvironmentSupportsSnoozeUntilThread(target.environmentId))
+    ) {
       return AsyncResult.failure(
         Cause.fail(
           new ThreadSnoozeUnsupportedError({
@@ -882,7 +891,11 @@ export function useThreadActions() {
     const action = ThreadUndo.begin("snooze", scopedThreadKey(target));
     const result = await snoozeThreadMutation({
       environmentId: target.environmentId,
-      input: { threadId: target.threadId, snoozedUntil },
+      input: {
+        threadId: target.threadId,
+        snoozedUntil,
+        ...(untilThreadId === undefined ? {} : { untilThreadId }),
+      },
     });
     if (result._tag !== "Success") {
       action.finish();
@@ -914,7 +927,11 @@ export function useThreadActions() {
           case "snooze":
             return snoozeThreadMutation({
               environmentId: target.environmentId,
-              input: { threadId: target.threadId, snoozedUntil: step.snoozedUntil },
+              input: {
+                threadId: target.threadId,
+                snoozedUntil: step.snoozedUntil,
+                ...(step.untilThreadId === undefined ? {} : { untilThreadId: step.untilThreadId }),
+              },
             });
         }
       },

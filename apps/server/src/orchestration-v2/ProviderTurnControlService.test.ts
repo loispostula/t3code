@@ -271,6 +271,7 @@ it.effect(
           getHeldQueuedRuns: () => Effect.die("not used"),
           getRecoveryThreadIds: () => Effect.die("unused getRecoveryThreadIds"),
           getUnreadableThreadIds: () => Effect.die("unused getUnreadableThreadIds"),
+          getSnoozeDependentThreadIds: () => Effect.die("unused getSnoozeDependentThreadIds"),
           getThreadSnapshot: () => Effect.die("unused getThreadSnapshot"),
           getThreadSnapshotWindow: () => Effect.die("unused getThreadSnapshotWindow"),
           getPullRequestSnapshot: () => Effect.die("unused getPullRequestSnapshot"),

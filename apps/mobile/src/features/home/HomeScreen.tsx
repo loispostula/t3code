@@ -15,6 +15,7 @@ import { pickableProjectGroups } from "@t3tools/client-runtime/state/project-gro
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
 import { type EnvironmentId, type SidebarProjectGroupingMode } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
+import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
 import { use, useEffect, useMemo, useRef, useState, type ComponentProps } from "react";
 import {
   Platform,
@@ -72,7 +73,9 @@ import { useThreadRowProviderInstanceResolver } from "../threads/thread-provider
 import { useOpenThreadPullRequests } from "../threads/use-open-thread-pull-requests";
 import type { ThreadPrPresentation } from "../../state/thread-pr-presentation";
 import {
+  buildSnoozeTargetCandidatesByProjectKey,
   threadListV2ListItemsAreEqual,
+  type SnoozeTargetCandidate,
   THREAD_LIST_V2_SETTLED_INITIAL_COUNT,
   THREAD_LIST_V2_SETTLED_PAGE_COUNT,
   type ThreadListV2ListItem,
@@ -116,7 +119,7 @@ interface HomeScreenProps {
   readonly onSettleThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
   readonly onSnoozeThread: (
     thread: EnvironmentThreadShell,
-    snoozedUntil: string,
+    snooze: Pick<SnoozePreset, "snoozedUntil" | "untilThread">,
   ) => Promise<boolean>;
   readonly onUnsnoozeThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
   readonly onUnsettleThread: (thread: EnvironmentThreadShell) => void;
@@ -446,6 +449,7 @@ export function HomeScreen(props: HomeScreenProps) {
     machineByEnvironmentId,
     settlementEnvironmentIds,
     snoozeEnvironmentIds,
+    snoozeUntilThreadEnvironmentIds,
     snoozePresetsByEnvironmentId,
     pinningEnvironmentIds,
     autoSettleOptOutEnvironmentIds,
@@ -482,6 +486,20 @@ export function HomeScreen(props: HomeScreenProps) {
     settledShelfExpanded,
     selectedThreadKey,
   });
+  // Stored as state so unchanged projects keep their candidate arrays and memoized rows skip
+  // re-rendering when unrelated thread fields change.
+  const [snoozeTargetCandidatesCache, setSnoozeTargetCandidatesCache] = useState<
+    ReadonlyMap<string, ReadonlyArray<SnoozeTargetCandidate>> | undefined
+  >(undefined);
+  const snoozeTargetCandidatesByProjectKey = buildSnoozeTargetCandidatesByProjectKey({
+    threads: props.threads,
+    environmentIds: snoozeUntilThreadEnvironmentIds,
+    settlementEnvironmentIds,
+    previous: snoozeTargetCandidatesCache,
+  });
+  if (snoozeTargetCandidatesByProjectKey !== snoozeTargetCandidatesCache) {
+    setSnoozeTargetCandidatesCache(snoozeTargetCandidatesByProjectKey);
+  }
   // Called as `props.onSelectThread(...)`, the compiler would cache this handler on the whole
   // props object, which is new on every render of Home's parent.
   const { onSelectThread } = props;
@@ -618,6 +636,9 @@ export function HomeScreen(props: HomeScreenProps) {
         onSettleThread={handleSettleThread}
         snoozeSupported={snoozeEnvironmentIds.has(thread.environmentId)}
         snoozePresets={snoozePresetsByEnvironmentId.get(thread.environmentId)}
+        snoozeTargetCandidates={snoozeTargetCandidatesByProjectKey.get(
+          scopedProjectKey(thread.environmentId, thread.projectId),
+        )}
         pinningSupported={pinningEnvironmentIds.has(thread.environmentId)}
         autoSettleOptOutSupported={autoSettleOptOutEnvironmentIds.has(thread.environmentId)}
         reorderSupported={
@@ -652,6 +673,7 @@ export function HomeScreen(props: HomeScreenProps) {
     savedConnectionsById: props.savedConnectionsById,
     searchQuery: props.searchQuery,
     selectedThreadKey,
+    snoozeTargetCandidatesByProjectKey,
     threadSearchMatchByKey,
     workingShelfEnabled,
   };

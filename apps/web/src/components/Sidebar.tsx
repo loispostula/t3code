@@ -146,6 +146,7 @@ import {
 } from "../state/environments";
 import {
   readThreadShell,
+  readThreadShells,
   useAllEnvironmentProjectSnapshotsReady,
   useDelegatedUnderParent,
   useProjects,
@@ -175,6 +176,7 @@ import { ProjectEnvironmentBadge } from "./ProjectEnvironmentBadge";
 import {
   buildDraftActionMenuItems,
   buildThreadActionMenuItems,
+  resolveSnoozeTarget,
   threadActionRequiresOperate,
 } from "./threadActionMenu.logic";
 import {
@@ -225,6 +227,8 @@ import { createSidebarListMotion } from "./Sidebar.motion";
 import {
   pickSnoozePreset,
   resolveSnoozePresets,
+  resolveSnoozeTargets,
+  snoozeTargetTooltip,
   snoozeWakeLabel,
   type SnoozePreset,
 } from "./Sidebar.snooze";
@@ -2220,7 +2224,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   };
   const performSnooze = async (
     threadRef: ScopedThreadRef,
-    preset: Pick<SnoozePreset, "snoozedUntil">,
+    preset: Pick<SnoozePreset, "snoozedUntil" | "untilThread">,
     opts: { coSnoozingKeys?: ReadonlySet<string> } = {},
   ) => {
     const threadKey = scopedThreadKey(threadRef);
@@ -2229,7 +2233,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     }
     snoozingThreadKeysRef.current.add(threadKey);
     const navigateAfterSnooze = planForwardNavigation(threadKey, opts.coSnoozingKeys);
-    const result = await snoozeThread(threadRef, preset.snoozedUntil);
+    const result = await snoozeThread(threadRef, preset.snoozedUntil, preset.untilThread?.id);
     snoozingThreadKeysRef.current.delete(threadKey);
     if (result._tag === "Failure") {
       return isAtomCommandInterrupted(result)
@@ -2252,7 +2256,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   };
   const attemptSnooze = (
     threadRef: ScopedThreadRef,
-    preset: Pick<SnoozePreset, "snoozedUntil">,
+    preset: Pick<SnoozePreset, "snoozedUntil" | "untilThread">,
     opts: { coSnoozingKeys?: ReadonlySet<string> } = {},
   ) => {
     void (async () => {
@@ -2606,11 +2610,13 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         const isSettled = settledThreadKeysRef.current.has(threadKey);
         const isSnoozed = snoozedThreadKeysRef.current.has(threadKey);
         const isPinned = thread.pinnedAt != null;
-        const snoozePresets = resolveSnoozePresets(
-          new Date(),
-          timestampFormat,
-          thread.environmentId,
-        );
+        const menuNow = new Date();
+        const snoozePresets = resolveSnoozePresets(menuNow, timestampFormat, thread.environmentId);
+        const snoozeTargets =
+          serverConfigs.get(thread.environmentId)?.environment.capabilities
+            .threadSnoozeUntilThread === true
+            ? resolveSnoozeTargets(thread, readThreadShells(), menuNow)
+            : [];
         const threadProjectGroup =
           projectGroupsRef.current.find((project) =>
             project.memberProjectRefs.some(
@@ -2654,22 +2660,25 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 titleRegeneration: configLoaded,
               },
               snoozePresets,
+              snoozeTargets,
             }),
             position,
           ),
         );
         if (clicked._tag === "Failure" || clicked.value === null) return;
         if (threadActionRequiresOperate(clicked.value) && !checkThreadOperations([thread])) return;
-        if (clicked.value?.startsWith("snooze:")) {
+        if (clicked.value.startsWith("snooze:") || clicked.value.startsWith("snooze-until:")) {
           const preset =
             clicked.value === "snooze:custom"
               ? await requestCustomSnooze()
-              : pickSnoozePreset(
-                  snoozePresets,
-                  clicked.value.slice("snooze:".length),
-                  timestampFormat,
-                  thread.environmentId,
-                );
+              : clicked.value.startsWith("snooze-until:")
+                ? resolveSnoozeTarget(clicked.value, snoozeTargets)
+                : pickSnoozePreset(
+                    snoozePresets,
+                    clicked.value.slice("snooze:".length),
+                    timestampFormat,
+                    thread.environmentId,
+                  );
           if (preset) attemptSnooze(threadRef, preset);
           return;
         }
@@ -3367,11 +3376,16 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                               actionSweep?.keys.has(threadKey) ? actionSweep.action : null
                             }
                             snoozeWakeLabelText={
-                              section === "snoozed" && thread.snoozedUntil != null
-                                ? snoozeWakeLabel(thread.snoozedUntil, {
-                                    now: new Date().toISOString(),
-                                  })
-                                : null
+                              section !== "snoozed" || thread.snoozedUntil == null
+                                ? null
+                                : thread.snoozedUntilThreadId !== null
+                                  ? "Waiting"
+                                  : snoozeWakeLabel(thread.snoozedUntil, {
+                                      now: new Date().toISOString(),
+                                    })
+                            }
+                            snoozeWakeLabelTooltip={
+                              section === "snoozed" ? snoozeTargetTooltip(thread, threads) : null
                             }
                             wokeAt={threadWokeAt(thread, { now: snoozeNow })}
                             isActive={routeRowThreadKey === threadKey}

@@ -55,7 +55,12 @@ import { composerDraftHasUserContent, useComposerDraftStore } from "../../compos
 import { useEnvironmentScope } from "~/state/session";
 import { threadEnvironment } from "../../state/threads";
 import { vcsEnvironment } from "../../state/vcs";
-import { useChildThreadInputs, readThreadShell, waitForThreadShell } from "../../state/entities";
+import {
+  useChildThreadInputs,
+  useQuietThreadShell,
+  readThreadShell,
+  waitForThreadShell,
+} from "../../state/entities";
 import { serverEnvironment } from "../../state/server";
 import { environmentShell } from "../../state/shell";
 import { ThreadStatusLine } from "./ThreadStatusLine";
@@ -604,6 +609,12 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
     : null;
   // The relative times read the clock; nowMinute re-renders them on the minute.
   const snoozedUntil = activeThreadShell?.snoozedUntil ?? null;
+  const snoozeTargetId = activeThreadShell?.snoozedUntilThreadId ?? null;
+  const snoozeTargetShell = useQuietThreadShell(
+    activeThreadShell === null || snoozeTargetId === null
+      ? null
+      : scopeThreadRef(activeThreadShell.environmentId, snoozeTargetId),
+  );
   const settledAt = activeThreadShell?.settledAt ?? null;
   // Same rounding as the sidebar's snoozed shelf, so both read the same hour.
   const snoozeWake = snoozedUntil
@@ -612,7 +623,13 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
   const threadStatusLine = activeThreadSnoozed ? (
     <ThreadStatusLine
       icon={<AlarmClockIcon />}
-      label={snoozeWake && snoozeWake !== "now" ? `Snoozed, ${snoozeWake} left` : "Snoozed"}
+      label={
+        snoozeTargetId !== null
+          ? `Snoozed until "${snoozeTargetShell?.title ?? "a deleted thread"}" settles`
+          : snoozeWake && snoozeWake !== "now"
+            ? `Snoozed, ${snoozeWake} left`
+            : "Snoozed"
+      }
       clockMinute={nowMinute}
       actionLabel={isUnsnoozing ? "Waking..." : "Wake now"}
       actionDisabled={!canOperateThread || isUnsnoozing}

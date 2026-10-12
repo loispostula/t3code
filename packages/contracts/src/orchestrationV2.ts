@@ -483,6 +483,7 @@ export const OrchestrationV2AppThread = Schema.Struct({
   unsettledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   snoozedUntil: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   snoozedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
+  snoozedUntilThreadId: Schema.optional(Schema.NullOr(ThreadId)),
   lastSnoozeWakeAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   limitRecovery: Schema.optional(Schema.NullOr(OrchestrationV2LimitRecovery)),
   guestShare: Schema.optional(Schema.NullOr(ThreadGuestShare)),
@@ -2130,6 +2131,7 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   unsettledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   snoozedUntil: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   snoozedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
+  snoozedUntilThreadId: Schema.optional(Schema.NullOr(ThreadId)),
   limitRecovery: Schema.optional(Schema.NullOr(OrchestrationV2LimitRecovery)),
   pinnedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
@@ -2984,6 +2986,9 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     snoozedUntil: IsoDateTime,
+    // Wake early once this thread (same environment) settles; snoozedUntil
+    // stays the backstop wake time.
+    untilThreadId: Schema.optional(ThreadId),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.unsnooze"),
@@ -3475,6 +3480,16 @@ const OrchestrationV2InternalCommand = Schema.Union([
     commandId: CommandId,
     parentThreadId: ThreadId,
     taskId: NodeId,
+  }),
+  /**
+   * Wakes a thread snoozed until `untilThreadId` after that thread settled, was archived, or
+   * was deleted. A thread no longer waiting on it is left as it is.
+   */
+  Schema.Struct({
+    type: Schema.Literal("thread.snooze-dependency.wake"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    untilThreadId: ThreadId,
   }),
   Schema.Struct({
     type: Schema.Literal("checkpoint.rollback.fail"),

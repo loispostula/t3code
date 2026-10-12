@@ -22,7 +22,6 @@ import {
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
   AuthOrchestrationOperateScope,
-  type EnvironmentId,
   type EnvironmentMachineKind,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
@@ -99,8 +98,17 @@ import {
   useLinkedThreadPullRequest,
   ThreadSearchPullRequestNumber,
 } from "../ThreadStatusIndicators";
-import { pickSnoozePreset, resolveSnoozePresets, type SnoozePreset } from "../Sidebar.snooze";
-import { useThreadShell } from "../../state/entities";
+import {
+  pickSnoozePreset,
+  resolveSnoozePresets,
+  resolveSnoozeTargets,
+  type SnoozePreset,
+} from "../Sidebar.snooze";
+import {
+  readEnvironmentSupportsSnoozeUntilThread,
+  readThreadShells,
+  useThreadShell,
+} from "../../state/entities";
 import { ProjectFavicon, type ProjectFaviconProject } from "../ProjectFavicon";
 import { ThreadSearchMatchExcerpt } from "../ThreadSearchMatch";
 import { makeWorkspaceFileDropHandlers } from "../chat/workspaceFileDrop";
@@ -110,7 +118,17 @@ import { shouldShowInstanceBadge, type ProviderInstanceEntry } from "../../provi
 import { useThreadRunningTerminalIds } from "../../state/terminalSessions";
 import { InlineButton } from "../ui/button";
 import { Kbd } from "../ui/kbd";
-import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuShortcut, MenuTrigger } from "../ui/menu";
+import {
+  Menu,
+  MenuItem,
+  MenuPopup,
+  MenuSeparator,
+  MenuShortcut,
+  MenuSub,
+  MenuSubPopup,
+  MenuSubTrigger,
+  MenuTrigger,
+} from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { MiddleTruncate } from "../ui/middle-truncate";
 import { useThreadHasUnsentDraft } from "../../composerDraftStore";
@@ -366,18 +384,41 @@ function SidebarThreadTooltip({
   );
 }
 
+function SnoozeWakeLabel(props: { text: string; tooltip: string | null }) {
+  const label = (
+    <span className="inline-flex items-center gap-1 text-xs text-info-foreground tabular-nums">
+      {/* The clock tells a wake time from an age at a glance. */}
+      <AlarmClockIcon aria-hidden className="size-3" />
+      {props.text}
+    </span>
+  );
+  if (props.tooltip === null) return label;
+  return (
+    <Tooltip>
+      <TooltipTrigger render={label} />
+      <TooltipPopup side="top">{props.tooltip}</TooltipPopup>
+    </Tooltip>
+  );
+}
+
 function SnoozeMenuButton(props: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onSnooze: (preset: Pick<SnoozePreset, "snoozedUntil">) => void;
+  onSnooze: (preset: Pick<SnoozePreset, "snoozedUntil" | "untilThread">) => void;
   timestampFormat: TimestampFormat;
-  environmentId: EnvironmentId;
+  thread: SidebarThreadSummary;
 }) {
-  const { open, onOpenChange, onSnooze, timestampFormat, environmentId } = props;
+  const { open, onOpenChange, onSnooze, timestampFormat, thread } = props;
+  const environmentId = thread.environmentId;
   const presets = open
     ? // oxlint-disable-next-line react/purity -- Presets are resolved only while the menu is open, so each opening reads a fresh time.
       resolveSnoozePresets(new Date(), timestampFormat, environmentId)
     : [];
+  const targets =
+    open && readEnvironmentSupportsSnoozeUntilThread(environmentId)
+      ? // oxlint-disable-next-line react/purity -- Read only while the menu is open, like the presets.
+        resolveSnoozeTargets(thread, readThreadShells(), new Date())
+      : [];
   return (
     <Menu open={open} onOpenChange={onOpenChange}>
       <Tooltip>
@@ -415,6 +456,24 @@ function SnoozeMenuButton(props: {
           </MenuItem>
         ))}
         {presets.length > 0 ? <MenuSeparator /> : null}
+        {targets.length > 0 ? (
+          <MenuSub>
+            <MenuSubTrigger>Until thread settles</MenuSubTrigger>
+            <MenuSubPopup>
+              {targets.map((target) => (
+                <MenuItem
+                  key={target.untilThread?.id}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onSnooze(target);
+                  }}
+                >
+                  {target.label}
+                </MenuItem>
+              ))}
+            </MenuSubPopup>
+          </MenuSub>
+        ) : null}
         <MenuItem
           onClick={async (event) => {
             event.stopPropagation();
@@ -548,6 +607,8 @@ type SidebarThreadRowProps = {
   dragOverPinned: boolean;
   sweepAction: SidebarSweepAction | null;
   snoozeWakeLabelText: string | null;
+  // Names the thread a snooze waits on; null for timer snoozes.
+  snoozeWakeLabelTooltip: string | null;
   wokeAt: string | null;
   isActive: boolean;
   // Set on the active row only; scrolls it into view when a reveal is owed.
@@ -581,7 +642,10 @@ type SidebarThreadRowProps = {
     event: PointerEvent,
   ) => void;
   onUnsettle: (threadRef: ScopedThreadRef) => void;
-  onSnooze: (threadRef: ScopedThreadRef, preset: Pick<SnoozePreset, "snoozedUntil">) => void;
+  onSnooze: (
+    threadRef: ScopedThreadRef,
+    preset: Pick<SnoozePreset, "snoozedUntil" | "untilThread">,
+  ) => void;
   onUnsnooze: (threadRef: ScopedThreadRef) => void;
   onUnpin: (threadRef: ScopedThreadRef) => void;
   onAcknowledgeWoke: (threadRef: ScopedThreadRef, visitedAt: string) => void;
@@ -898,7 +962,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     event.stopPropagation();
     onUnpin(threadRef);
   };
-  const handleSnoozePreset = (preset: Pick<SnoozePreset, "snoozedUntil">) => {
+  const handleSnoozePreset = (preset: Pick<SnoozePreset, "snoozedUntil" | "untilThread">) => {
     onSnooze(threadRef, preset);
   };
   const [snoozeMenuOpenRaw, setSnoozeMenuOpen] = useState(false);
@@ -1274,11 +1338,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                     )}
                   >
                     {variantAction === "unsnooze" && props.snoozeWakeLabelText !== null ? (
-                      <span className="inline-flex items-center gap-1 text-xs text-info-foreground tabular-nums">
-                        {/* The clock tells a wake time from an age at a glance. */}
-                        <AlarmClockIcon aria-hidden className="size-3" />
-                        {props.snoozeWakeLabelText}
-                      </span>
+                      <SnoozeWakeLabel
+                        text={props.snoozeWakeLabelText}
+                        tooltip={props.snoozeWakeLabelTooltip}
+                      />
                     ) : (inFolder ? isWokeStatus : isWoke) ? (
                       <Tooltip>
                         <TooltipTrigger
@@ -1543,7 +1606,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                           onOpenChange={setSnoozeMenuOpen}
                           onSnooze={handleSnoozePreset}
                           timestampFormat={props.timestampFormat}
-                          environmentId={thread.environmentId}
+                          thread={thread}
                         />
                       ) : null}
                       {props.settlementSupported ? (

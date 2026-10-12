@@ -679,6 +679,10 @@ export interface ProjectionStoreV2Shape {
     ReadonlyArray<ThreadId>,
     ProjectionStoreV2Error
   >;
+  /** Live threads snoozed until `threadId` settles. */
+  readonly getSnoozeDependentThreadIds: (
+    threadId: ThreadId,
+  ) => Effect.Effect<ReadonlyArray<ThreadId>, ProjectionStoreV2Error>;
   readonly getThreadSnapshot: (threadId: ThreadId) => Effect.Effect<
     {
       readonly schemaVersion: number;
@@ -1672,6 +1676,7 @@ export function threadShellFromProjection(
     unsettledAt: projection.thread.unsettledAt ?? null,
     snoozedUntil: projection.thread.snoozedUntil ?? null,
     snoozedAt: projection.thread.snoozedAt ?? null,
+    snoozedUntilThreadId: projection.thread.snoozedUntilThreadId ?? null,
     pinnedAt: projection.thread.pinnedAt ?? null,
 
     autoSettleDisabledAt: projection.thread.autoSettleDisabledAt ?? null,
@@ -1938,6 +1943,7 @@ function shellFromState(input: {
     unsettledAt: input.state.thread.unsettledAt ?? null,
     snoozedUntil: input.state.thread.snoozedUntil ?? null,
     snoozedAt: input.state.thread.snoozedAt ?? null,
+    snoozedUntilThreadId: input.state.thread.snoozedUntilThreadId ?? null,
     pinnedAt: input.state.thread.pinnedAt ?? null,
 
     autoSettleDisabledAt: input.state.thread.autoSettleDisabledAt ?? null,
@@ -2027,6 +2033,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 updated_at,
                 archived_at,
                 deleted_at,
+                snoozed_until_thread_id,
                 payload_json
               )
               VALUES (
@@ -2042,6 +2049,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 ${stringField(payload, "updatedAt")},
                 ${nullableStringField(payload, "archivedAt")},
                 ${nullableStringField(payload, "deletedAt")},
+                ${event.payload.snoozedUntilThreadId ?? null},
                 ${payloadJson}
               )
               ON CONFLICT(thread_id)
@@ -2057,6 +2065,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 updated_at = excluded.updated_at,
                 archived_at = excluded.archived_at,
                 deleted_at = excluded.deleted_at,
+                snoozed_until_thread_id = excluded.snoozed_until_thread_id,
                 payload_json = excluded.payload_json
             `;
               break;
@@ -4259,6 +4268,19 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         return rows.map((row) => ThreadId.make(row.thread_id));
       },
       Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })),
+    );
+
+    const getSnoozeDependentThreadIds = Effect.fn("ProjectionStore.getSnoozeDependentThreadIds")(
+      function* (threadId: ThreadId) {
+        const rows = yield* sql<{ readonly thread_id: string }>`
+          SELECT thread_id FROM orchestration_v2_projection_threads
+          WHERE snoozed_until_thread_id = ${threadId}
+            AND deleted_at IS NULL
+        `;
+        return rows.map((row) => ThreadId.make(row.thread_id));
+      },
+      (effect, threadId) =>
+        effect.pipe(Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause }))),
     );
 
     const getUnreadableThreadIds = Effect.fn("ProjectionStore.getUnreadableThreadIds")(
@@ -7419,6 +7441,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getLimitRecoveryWakeAt: readOnReader(getLimitRecoveryWakeAt),
       getRecoveryThreadIds: readOnReader(getRecoveryThreadIds),
       getUnreadableThreadIds: readOnReader(getUnreadableThreadIds),
+      getSnoozeDependentThreadIds: readOnReader(getSnoozeDependentThreadIds),
       getThreadSnapshot: readOnReader(getThreadSnapshot),
       getThreadSnapshotWindow: readOnReader(getThreadSnapshotWindow),
       getTimelinePage: readOnReader(getTimelinePage),

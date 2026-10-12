@@ -16,6 +16,8 @@ export type ThreadActionMenuId =
   | "auto-settle:disabled"
   | "snooze"
   | `snooze:${string}`
+  | "snooze-until"
+  | `snooze-until:${string}`
   | "unsnooze"
   | "rename"
   | "regenerate-title"
@@ -91,10 +93,20 @@ export interface ThreadActionMenuState {
     readonly titleRegeneration: boolean;
   };
   readonly snoozePresets: ReadonlyArray<SnoozePreset>;
+  /** until-thread presets; empty when the server cannot take them. */
+  readonly snoozeTargets: ReadonlyArray<SnoozePreset>;
   /** Guest links need their own grant, so the caller checks it instead of `canOperate`. */
   readonly canShareWithGuest?: boolean;
   /** A No project thread with its own folder, on a server that can promote it. */
   readonly canTurnIntoProject?: boolean;
+}
+
+/** The until-thread preset a clicked `snooze-until:` menu id stands for, if any. */
+export function resolveSnoozeTarget(
+  id: string,
+  targets: ReadonlyArray<SnoozePreset>,
+): SnoozePreset | undefined {
+  return targets.find((target) => `snooze-until:${target.untilThread?.id}` === id);
 }
 
 /** Local navigation, read markers, and copying remain available to read-only clients. */
@@ -157,10 +169,24 @@ export function buildThreadActionMenuItems(
                     id: `snooze:${preset.id}` as const,
                     label: `${preset.label} (${preset.whenLabel})`,
                   })),
+                  ...(state.snoozeTargets.length > 0
+                    ? [
+                        {
+                          id: "snooze-until" as const,
+                          label: "Until thread settles",
+                          separatorBefore: state.snoozePresets.length > 0,
+                          children: state.snoozeTargets.map((target) => ({
+                            id: `snooze-until:${target.untilThread?.id}` as const,
+                            label: target.label,
+                          })),
+                        },
+                      ]
+                    : []),
                   {
                     id: "snooze:custom" as const,
                     label: "Custom…",
-                    separatorBefore: state.snoozePresets.length > 0,
+                    separatorBefore:
+                      state.snoozeTargets.length === 0 && state.snoozePresets.length > 0,
                   },
                 ],
               },

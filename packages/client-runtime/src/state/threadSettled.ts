@@ -1,4 +1,5 @@
 // @effect-diagnostics globalDate:off -- UI snooze presets use local calendar boundaries and Intl labels.
+import type { ThreadId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import { DEFAULT_SNOOZE_PRESETS, type SnoozePresetSetting } from "@t3tools/contracts/settings";
 
@@ -188,6 +189,26 @@ export interface SnoozePreset {
   readonly label: string;
   readonly whenLabel: string;
   readonly snoozedUntil: string;
+  /** Also wake once this thread settles; snoozedUntil is then the backstop. */
+  readonly untilThread?: { readonly id: ThreadId; readonly title: string };
+}
+
+/** How long a snooze waiting on another thread lasts if that thread never settles. */
+export const SNOOZE_UNTIL_THREAD_BACKSTOP_DAYS = 30;
+
+export function snoozeUntilThreadPreset(
+  now: Date,
+  target: { readonly id: ThreadId; readonly title: string },
+): SnoozePreset {
+  return {
+    id: "until-thread",
+    label: target.title,
+    whenLabel: "",
+    snoozedUntil: new Date(
+      now.getTime() + SNOOZE_UNTIL_THREAD_BACKSTOP_DAYS * DAY_MS,
+    ).toISOString(),
+    untilThread: target,
+  };
 }
 
 export interface SnoozePresetOptions {
