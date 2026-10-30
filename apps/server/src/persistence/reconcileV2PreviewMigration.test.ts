@@ -9,6 +9,7 @@ import { migrationManifest, runMigrations } from "./Migrations.ts";
 import PullRequestFilesViewed from "./Migrations/053_PullRequestFilesViewed.ts";
 import RemoveRedundantProjectionIndexes from "./Migrations/056_RemoveRedundantProjectionIndexes.ts";
 import OrchestrationV2 from "./Migrations/055_OrchestrationV2.ts";
+import ProjectionThreadsSnoozedUntilThread from "./Migrations/075_ProjectionThreadsSnoozedUntilThread.ts";
 
 const seedPreview = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -177,6 +178,29 @@ describe("V2 preview upgrade", () => {
       assert.deepStrictEqual(
         yield* sql`SELECT * FROM effect_sql_migrations ORDER BY migration_id`,
         history,
+      );
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+  );
+
+  it.effect("upgrades a fork that recorded snooze-until-thread at id 67", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* runMigrations({ toMigrationInclusive: 66 });
+      yield* Migrator.make({})({
+        loader: Migrator.fromRecord({
+          "67_ProjectionThreadsSnoozedUntilThread": ProjectionThreadsSnoozedUntilThread,
+        }),
+      });
+      assert.deepStrictEqual(
+        (yield* runMigrations()).map(([id]) => id),
+        [67, 68, 69, 70, 71, 72, 73, 74, 75],
+      );
+      const history = yield* sql<{ readonly migration_id: number; readonly name: string }>`
+        SELECT migration_id, name FROM effect_sql_migrations ORDER BY migration_id
+      `;
+      assert.deepStrictEqual(
+        history.map((row) => [row.migration_id, row.name] as const),
+        migrationManifest,
       );
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );

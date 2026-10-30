@@ -215,6 +215,20 @@ const assertV2MigrationsCanRun = Effect.fn("assertV2MigrationsCanRun")(function*
   });
 });
 
+// Fork builds recorded the snooze-until-thread migration at 67 before upstream took 67-73;
+// dropping that row lets 67-75 run, and 075 is idempotent on the column it already added.
+const reconcileForkSnoozeMigration = Effect.fn("reconcileForkSnoozeMigration")(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  const tables = yield* sql`
+    SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'effect_sql_migrations'
+  `;
+  if (tables.length === 0) return;
+  yield* sql`
+    DELETE FROM effect_sql_migrations
+    WHERE migration_id = 67 AND name = 'ProjectionThreadsSnoozedUntilThread'
+  `;
+});
+
 const run = Migrator.make({});
 
 export interface RunMigrationsOptions {
@@ -228,6 +242,7 @@ export const runMigrations = Effect.fn("runMigrations")(function* ({
     toMigrationInclusive === undefined || toMigrationInclusive >= FIRST_V2_MIGRATION_ID;
   const previewMigrations = includesV2 ? yield* reconcileV2PreviewMigration() : [];
   if (includesV2) {
+    yield* reconcileForkSnoozeMigration();
     yield* assertV2MigrationsCanRun(toMigrationInclusive);
   }
   const executedMigrations = [
