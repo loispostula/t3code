@@ -194,7 +194,7 @@ export interface SnoozePreset {
 }
 
 /** How long a snooze waiting on another thread lasts if that thread never settles. */
-export const SNOOZE_UNTIL_THREAD_BACKSTOP_DAYS = 30;
+const SNOOZE_UNTIL_THREAD_BACKSTOP_DAYS = 30;
 
 export function snoozeUntilThreadPreset(
   now: Date,
