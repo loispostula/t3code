@@ -204,4 +204,50 @@ describe("V2 preview upgrade", () => {
       );
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
+
+  it.effect("upgrades a fork that recorded snooze-until-thread at id 62", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* runMigrations({ toMigrationInclusive: 61 });
+      yield* Migrator.make({})({
+        loader: Migrator.fromRecord({
+          "62_ProjectionThreadsSnoozedUntilThread": ProjectionThreadsSnoozedUntilThread,
+        }),
+      });
+      assert.deepStrictEqual(
+        (yield* runMigrations()).map(([id]) => id),
+        [62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75],
+      );
+      const history = yield* sql<{ readonly migration_id: number; readonly name: string }>`
+        SELECT migration_id, name FROM effect_sql_migrations ORDER BY migration_id
+      `;
+      assert.deepStrictEqual(
+        history.map((row) => [row.migration_id, row.name] as const),
+        migrationManifest,
+      );
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+  );
+
+  it.effect("upgrades a fork that recorded snooze-until-thread at id 74", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* runMigrations({ toMigrationInclusive: 73 });
+      yield* Migrator.make({})({
+        loader: Migrator.fromRecord({
+          "74_ProjectionThreadsSnoozedUntilThread": ProjectionThreadsSnoozedUntilThread,
+        }),
+      });
+      assert.deepStrictEqual(
+        (yield* runMigrations()).map(([id]) => id),
+        [74, 75],
+      );
+      const history = yield* sql<{ readonly migration_id: number; readonly name: string }>`
+        SELECT migration_id, name FROM effect_sql_migrations ORDER BY migration_id
+      `;
+      assert.deepStrictEqual(
+        history.map((row) => [row.migration_id, row.name] as const),
+        migrationManifest,
+      );
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+  );
 });
