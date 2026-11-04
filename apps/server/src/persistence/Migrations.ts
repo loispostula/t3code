@@ -215,8 +215,8 @@ const assertV2MigrationsCanRun = Effect.fn("assertV2MigrationsCanRun")(function*
   });
 });
 
-// Fork builds recorded the snooze-until-thread migration at 62, 67 or 74 before upstream took those ids;
-// dropping that row lets the skipped ids run, and 075 is idempotent on the column it already added.
+// Fork builds recorded the snooze-until-thread migration at 62, 67, 74 or 75 before upstream took those ids;
+// dropping that row lets the skipped ids run, and 080 is idempotent on the column it already added.
 const reconcileForkSnoozeMigration = Effect.fn("reconcileForkSnoozeMigration")(function* () {
   const sql = yield* SqlClient.SqlClient;
   const tables = yield* sql`
@@ -225,7 +225,7 @@ const reconcileForkSnoozeMigration = Effect.fn("reconcileForkSnoozeMigration")(f
   if (tables.length === 0) return;
   yield* sql`
     DELETE FROM effect_sql_migrations
-    WHERE migration_id <> 75 AND name = 'ProjectionThreadsSnoozedUntilThread'
+    WHERE migration_id <> 80 AND name = 'ProjectionThreadsSnoozedUntilThread'
   `;
 });
 
